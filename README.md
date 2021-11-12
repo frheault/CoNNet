@@ -1,1 +1,1 @@
-# connectome_classification
+# CoNNet
