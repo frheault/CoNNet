@@ -16,9 +16,9 @@ use_cuda = torch.cuda.is_available()
 class E2EBlock(torch.nn.Module):
     '''E2Eblock.'''
 
-    def __init__(self, in_planes, planes, example, bias=False):
+    def __init__(self, in_planes, planes, matrix_size, bias=False):
         super(E2EBlock, self).__init__()
-        self.d = example.size(3)
+        self.d = matrix_size
         self.cnn1 = torch.nn.Conv2d(in_planes, planes, (1, self.d),
                                     bias=bias)
         self.cnn2 = torch.nn.Conv2d(in_planes, planes, (self.d, 1),
