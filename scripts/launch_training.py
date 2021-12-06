@@ -82,7 +82,7 @@ def main():
     #     "l1": tune.choice([32]),
     #     "l2": tune.choice([64]),
     #     "l3": tune.choice([256]),
-    #     "lr": tune.choice([0.005]),
+    #     "lr": tune.choice([0.001]),
     #     "batch_size": tune.choice([25])
     # }
 

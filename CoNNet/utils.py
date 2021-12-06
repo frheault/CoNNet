@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from copy import deepcopy
 import itertools
 from sklearn.model_selection import train_test_split
 import torch.utils.data.dataset
@@ -13,10 +14,13 @@ import ray
 import coloredlogs
 from termcolor import colored
 
-verbose=True
+verbose = True
+
+
 def color_print(txt, color='green'):
     if verbose:
         print(colored(txt, color))
+
 
 def read_matrix(filepath):
     _, ext = os.path.splitext(filepath)
@@ -37,9 +41,15 @@ def load_data(directory_path, labels_path,
               as_one_hot=False):
     features_matrices = []
     labels_data = pd.read_excel(labels_path, index_col=0)
+    drop_subj = 0
     for subj in labels_data.index.tolist():
         if not os.path.isdir(os.path.join(directory_path, subj)):
             labels_data = labels_data.drop([subj])
+            drop_subj += 1
+
+    if drop_subj:
+        color_print(
+            '{} drop subjects from missing files/folders.'.format(drop_subj))
 
     subj_id = labels_data.index.tolist()
     labels = labels_data['labels'].tolist()
@@ -55,14 +65,14 @@ def load_data(directory_path, labels_path,
     else:
         extra_tabular = [[None] for i in range(len(labels))]
         nbr_tab = 1
-    extra_tabular = np.array(extra_tabular).reshape((len(labels), nbr_tab)).tolist()
+    extra_tabular = np.array(extra_tabular).reshape(
+        (len(labels), nbr_tab)).tolist()
 
     # Shuffle the ordering
     tmp = list(zip(subj_id, labels, extra_tabular))
     random.seed(0)
     random.shuffle(tmp)
     subj_id, labels, extra_tabular = zip(*tmp)
-    # subj_id, labels = list(subj_id), list(labels)
 
     if features_filename_include is None:
         features_filename_include = []
@@ -76,14 +86,13 @@ def load_data(directory_path, labels_path,
                 features_filename_include.remove(filename)
 
     for subj in subj_id:
-        #if os.path.isdir(os.path.join(directory_path, subj)):
         base_matrix = read_matrix(os.path.join(directory_path, subj,
-                                            features_filename_include[0]))
+                                               features_filename_include[0]))
         features = np.zeros(base_matrix.shape +
                             (len(features_filename_include),))
         for i, filename in enumerate(features_filename_include):
             features[:, :, i] = read_matrix(os.path.join(directory_path, subj,
-                                                        filename))
+                                                         filename))
 
         features_matrices.append(features)
 
@@ -117,14 +126,12 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.mode = mode
         self.transform = transform
 
-        # ADAPT
         split_ratio = 0.75
         idx_train = list(range(int(len(labels)*split_ratio)))
         idx_test = list(range(int(len(labels)*split_ratio), len(labels)))
-        color_print('Load {} datasets, split with ratio of {}%.'.format(
-            len(labels), split_ratio*100))
-        color_print('{} datasets in train and {} in test.'.format(
-            len(idx_train), len(idx_test)))
+        func_name = 'a' if transform else 'no'
+        color_print('Creating loader with {} datasets for {} set with {} transform'.format(
+            len(labels), mode, func_name))
 
         if self.mode == 'train':
             x = features_matrices[idx_train, ...]
@@ -138,7 +145,6 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.X = torch.FloatTensor(x.astype(np.float32))
         self.Y = torch.FloatTensor(y.astype(np.float32))
         self.T = torch.FloatTensor(t.astype(np.float32))
-
 
     def __len__(self):
         return self.X.shape[0]
@@ -158,11 +164,30 @@ class add_noise(object):
     """ Add noise to existing connections, centered at 0 with STD of 0.025 """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         for i in range(len(array)):
             tmp_arr = array[i].numpy()
-            non_zeros = np.count_nonzero(tmp_arr)
-            tmp_arr[tmp_arr > 0] += np.random.normal(0, 0.025, non_zeros)
+            shape = tmp_arr.shape
+            noise = np.random.normal(0, 0.025,
+                                     np.prod(shape)).reshape(shape)
+            minval = np.min(tmp_arr[np.nonzero(tmp_arr)])
+            noise[tmp_arr < minval] = 0
+            noise = np.triu(noise) + np.triu(noise, k=1).T
+            tmp_arr += noise
+
+        return array
+
+
+class remove_row_column(object):
+    """ Add noise to existing connections, centered at 0 with STD of 0.025 """
+
+    def __call__(self, array):
+        # np.random.seed(0)
+        idx = int(np.random.rand() * array[0].numpy().shape[0])
+        for i in range(len(array)):
+            tmp_arr = array[i].numpy()
+            tmp_arr[:, idx] = 0
+            tmp_arr[idx, :] = 0
 
         return array
 
@@ -172,15 +197,17 @@ class add_connections(object):
         values similar to the noise (above) """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         tmp_arr = array.numpy()
+        
         shape = tmp_arr.shape[1:3]
         total_new_conn = np.prod(shape) // 100
         positions = random.sample(np.argwhere(tmp_arr[0] == 0).tolist(),
                                   total_new_conn)
         for pos in positions:
-            tmp_arr[:, pos[0], pos[1]] = np.abs(np.random.normal(
-                0, 0.05, len(tmp_arr)))
+            noise = np.abs(np.random.normal(0, 0.05, len(tmp_arr)))
+            tmp_arr[:, pos[0], pos[1]] = noise
+            tmp_arr[:, pos[1], pos[0]] = noise
 
         return array
 
@@ -189,7 +216,7 @@ class remove_connections(object):
     """ Removes connections to matrices, -1% new connections force to zero """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         tmp_arr = array.numpy()
         shape = tmp_arr.shape[1:3]
         total_new_conn = np.prod(shape) // 100
@@ -197,5 +224,23 @@ class remove_connections(object):
                                   total_new_conn)
         for pos in positions:
             tmp_arr[:, pos[0], pos[1]] = 0
+            tmp_arr[:, pos[1], pos[0]] = 0
+
+        return array
+
+
+class add_spike(object):
+    """ Add connections to matrices, +1% new connections with positive
+        values similar to the noise (above) """
+
+    def __call__(self, array):
+        # np.random.seed(0)
+        tmp_arr = array.numpy()
+        pos = int(np.random.rand()*tmp_arr.shape[1]), int(np.random.rand()*tmp_arr.shape[1])
+        which_array = int(np.random.rand() * len(tmp_arr))
+
+        tmp_arr[which_array, pos[0], pos[1]] = 10
+        tmp_arr[which_array, pos[1], pos[0]] = 10
+        tmp_arr[which_array, :, :] /= 10
 
         return array

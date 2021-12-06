@@ -1,9 +1,11 @@
 
 #!/usr/bin/env python
 
+import logging
 import os
-from CoNNet.utils import (load_data, ConnectomeDataset,
-                          add_noise, add_connections, remove_connections)
+from CoNNet.utils import (color_print, load_data, ConnectomeDataset,
+                          add_noise, add_connections, remove_connections,
+                          remove_row_column, add_spike)
 from CoNNet.models import BrainNetCNN
 import torch
 import numpy as np
@@ -39,10 +41,9 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-import logging
+
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                          checkpoint_dir=None):
-    print('=====================')
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
                              features_filename_exclude=['tot_commit2_weights.npy',
@@ -59,15 +60,23 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                                          transform=transform)
     trainset_noise = ConnectomeDataset(loaded_stuff, mode='train',
                                        transform=add_noise())
-    trainset = ConcatDataset([trainset_ori, trainset_add_rem, trainset_noise])
+    trainset_spike = ConnectomeDataset(loaded_stuff, mode='train',
+                                       transform=add_spike())
+    trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
+                                         transform=remove_row_column())
+    trainset = ConcatDataset([trainset_ori, trainset_add_rem,
+                              trainset_noise, trainset_spike,
+                              trainset_row_col])
 
     # Split training set in two (train/validation)
     len_ts = len(trainset)
     rng = torch.Generator().manual_seed(42)
-    test_abs = int(len_ts * 0.8)
+    test_abs = int(len_ts * 0.80)
     train_subset, val_subset = random_split(trainset,
                                             [test_abs, len_ts - test_abs],
                                             generator=rng)
+    color_print('Final datasets (with data augmentation): {} train and {} val'.format(
+        len(train_subset), len(val_subset)))
     set_seed()
     trainloader = DataLoader(train_subset, batch_size=int(config['batch_size']),
                              shuffle=True, num_workers=1,
@@ -232,7 +241,8 @@ def test_classification(result, in_folder, in_labels):
         if use_cuda:
             inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda()
         with torch.no_grad():
-            inputs, tabs, targets = Variable(inputs), Variable(tabs), Variable(targets).long()
+            inputs, tabs, targets = Variable(inputs), Variable(
+                tabs), Variable(targets).long()
 
             tabs = None if nbr_tabular == 0 else tabs
             outputs = net(inputs, tabs)
