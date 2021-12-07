@@ -71,20 +71,20 @@ def main():
     in_labels = os.path.join(os.getcwd(), args.in_labels)
 
     init()
-    config = {
-        "l1": tune.choice([16, 24, 32]),
-        "l2": tune.choice([32, 48, 64]),
-        "l3": tune.choice([64, 128, 256]),
-        "lr": tune.choice([0.005, 0.001]),
-        "batch_size": tune.choice([25, 50])
-    }
     # config = {
-    #     "l1": tune.choice([32]),
-    #     "l2": tune.choice([64]),
-    #     "l3": tune.choice([256]),
-    #     "lr": tune.choice([0.001]),
-    #     "batch_size": tune.choice([25])
+    #     "l1": tune.choice([16, 24, 32]),
+    #     "l2": tune.choice([32, 48, 64]),
+    #     "l3": tune.choice([64, 128, 256]),
+    #     "lr": tune.choice([0.005, 0.001]),
+    #     "batch_size": tune.choice([25, 50])
     # }
+    config = {
+        "l1": tune.choice([32]),
+        "l2": tune.choice([64]),
+        "l3": tune.choice([256]),
+        "lr": tune.choice([0.005]),
+        "batch_size": tune.choice([25])
+    }
 
     reporter = CLIReporter(
         parameter_columns=["l1", "l2", 'l3', "lr", "batch_size"],
