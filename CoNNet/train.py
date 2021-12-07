@@ -71,7 +71,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
 
     # Split training set in two (train/validation)
     len_ts = len(trainset)
-    rng = torch.Generator().manual_seed(42)
+    rng = torch.Generator().manual_seed(0)
     test_abs = int(len_ts * 0.80)
     train_subset, val_subset = random_split(trainset,
                                             [test_abs, len_ts - test_abs],
@@ -124,10 +124,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
         ytrue = []
         for batch_idx, (inputs, tabs, targets) in enumerate(trainloader):
             if use_cuda:
-                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda()
+                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
             optimizer.zero_grad()
-            inputs, tabs, targets = Variable(inputs), Variable(
-                tabs).long(), Variable(targets).long()
 
             tabs = None if nbr_tabular == 0 else tabs
             outputs = net(inputs, tabs)
@@ -158,11 +156,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
         ytrue = []
         for batch_idx, (inputs, tabs, targets) in enumerate(valloader):
             if use_cuda:
-                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda()
+                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
             with torch.no_grad():
-                inputs, tabs, targets = Variable(inputs), Variable(
-                    tabs), Variable(targets).long()
-
                 tabs = None if nbr_tabular == 0 else tabs
                 outputs = net(inputs, tabs)
                 loss = criterion(outputs, targets)
@@ -240,11 +235,8 @@ def test_classification(result, in_folder, in_labels):
 
     for batch_idx, (inputs, tabs, targets) in enumerate(testloader):
         if use_cuda:
-            inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda()
+            inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
         with torch.no_grad():
-            inputs, tabs, targets = Variable(inputs), Variable(
-                tabs), Variable(targets).long()
-
             tabs = None if nbr_tabular == 0 else tabs
             outputs = net(inputs, tabs)
             loss = criterion(outputs, targets)

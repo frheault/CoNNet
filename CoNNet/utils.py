@@ -126,12 +126,10 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.mode = mode
         self.transform = transform
 
-        split_ratio = 0.75
+        split_ratio = 0.60
         idx_train = list(range(int(len(labels)*split_ratio)))
         idx_test = list(range(int(len(labels)*split_ratio), len(labels)))
         func_name = 'a' if transform else 'no'
-        color_print('Creating loader with {} datasets for {} set with {} transform'.format(
-            len(labels), mode, func_name))
 
         if self.mode == 'train':
             x = features_matrices[idx_train, ...]
@@ -141,6 +139,9 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             x = features_matrices[idx_test, ...]
             y = labels[idx_test, ...]
             t = extra_tabular[idx_test, ...]
+
+        color_print('Creating loader with {} datasets for {} set with {} transform'.format(
+            len(y), mode, func_name))
 
         self.X = torch.FloatTensor(x.astype(np.float32))
         self.Y = torch.FloatTensor(y.astype(np.float32))
@@ -167,8 +168,9 @@ class add_noise(object):
         # np.random.seed(0)
         for i in range(len(array)):
             tmp_arr = array[i].numpy()
+            noise_level = np.percentile(tmp_arr[tmp_arr > 0], 10)
             shape = tmp_arr.shape
-            noise = np.random.normal(0, 0.025,
+            noise = np.random.normal(0, noise_level,
                                      np.prod(shape)).reshape(shape)
             minval = np.min(tmp_arr[np.nonzero(tmp_arr)])
             noise[tmp_arr < minval] = 0
@@ -199,10 +201,10 @@ class add_connections(object):
     def __call__(self, array):
         # np.random.seed(0)
         tmp_arr = array.numpy()
-        
-        shape = tmp_arr.shape[1:3]
-        total_new_conn = np.prod(shape) // 100
-        positions = random.sample(np.argwhere(tmp_arr[0] == 0).tolist(),
+
+        positions = np.argwhere(tmp_arr[0] == 0).tolist()
+        total_new_conn = len(positions) // 10
+        positions = random.sample(positions,
                                   total_new_conn)
         for pos in positions:
             noise = np.abs(np.random.normal(0, 0.05, len(tmp_arr)))
@@ -236,7 +238,8 @@ class add_spike(object):
     def __call__(self, array):
         # np.random.seed(0)
         tmp_arr = array.numpy()
-        pos = int(np.random.rand()*tmp_arr.shape[1]), int(np.random.rand()*tmp_arr.shape[1])
+        pos = int(np.random.rand() *
+                  tmp_arr.shape[1]), int(np.random.rand()*tmp_arr.shape[1])
         which_array = int(np.random.rand() * len(tmp_arr))
 
         tmp_arr[which_array, pos[0], pos[1]] = 10
