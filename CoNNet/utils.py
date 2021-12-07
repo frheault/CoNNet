@@ -1,18 +1,12 @@
 #!/usr/bin/env python
 
-from copy import deepcopy
-import itertools
-from sklearn.model_selection import train_test_split
-import torch.utils.data.dataset
-from sklearn.preprocessing import normalize
 import os
-import pandas as pd
-import numpy as np
 import random
-import logging
-import ray
-import coloredlogs
 from termcolor import colored
+
+import numpy as np
+import pandas as pd
+import torch.utils.data.dataset
 
 verbose = True
 
@@ -117,10 +111,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
                  class_balancing=False):
         """
         Args:
-            directory (string): Path to the dataset.
-            mode (str): train = 90% Train, validation=10% Train, train+validation=100% train else test.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
+
         """
         labels, features_matrices, extra_tabular = loaded_data
         self.mode = mode
@@ -140,8 +131,8 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             y = labels[idx_test, ...]
             t = extra_tabular[idx_test, ...]
 
-        color_print('Creating loader with {} datasets for {} set with {} transform'.format(
-            len(y), mode, func_name))
+        color_print('Creating loader with {} datasets for {} set with {} '
+                    'transform'.format(len(y), mode, func_name))
 
         self.X = torch.FloatTensor(x.astype(np.float32))
         self.Y = torch.FloatTensor(y.astype(np.float32))

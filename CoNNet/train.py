@@ -1,28 +1,24 @@
-
 #!/usr/bin/env python
 
-import logging
 import os
+import random
+
+import numpy as np
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import KFold
+import torch
+from torch.utils.data import (ConcatDataset,
+                              DataLoader,
+                              SubsetRandomSampler)
+from torchvision import transforms
+from torch.utils.tensorboard import SummaryWriter
+from ray import tune
+
 from CoNNet.utils import (color_print, load_data, ConnectomeDataset,
                           add_noise, add_connections, remove_connections,
                           remove_row_column, add_spike)
 from CoNNet.models import BrainNetCNN
-import torch
-import numpy as np
 
-import torch.nn.functional as F
-import torch.nn
-from torch.utils.data import DataLoader, ConcatDataset
-from torch.autograd import Variable
-from torchvision import transforms
-from torch.utils.data import random_split
-
-import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
-from sklearn.metrics import accuracy_score
-
-from ray import tune
-import random
 
 use_cuda = torch.cuda.is_available()
 
@@ -51,41 +47,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                              labels_path=in_labels,
                              features_filename_exclude=to_exclude)
 
-    # Prepare train/val with data augmentation
-    # 1) Add and remove connections
-    # 2) Add noise (+/-) to all existing connections
-    transform = transforms.Compose([add_connections(), remove_connections()])
-    trainset_ori = ConnectomeDataset(loaded_stuff, mode='train',
-                                     transform=False)
-    trainset_add_rem = ConnectomeDataset(loaded_stuff, mode='train',
-                                         transform=transform)
-    trainset_noise = ConnectomeDataset(loaded_stuff, mode='train',
-                                       transform=add_noise())
-    trainset_spike = ConnectomeDataset(loaded_stuff, mode='train',
-                                       transform=add_spike())
-    trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
-                                         transform=remove_row_column())
-    trainset = ConcatDataset([trainset_ori, trainset_add_rem,
-                              trainset_noise, trainset_spike,
-                              trainset_row_col])
-
-    # Split training set in two (train/validation)
-    len_ts = len(trainset)
-    rng = torch.Generator().manual_seed(0)
-    test_abs = int(len_ts * 0.80)
-    train_subset, val_subset = random_split(trainset,
-                                            [test_abs, len_ts - test_abs],
-                                            generator=rng)
-    color_print('Final datasets (with data augmentation): {} train and {} val'.format(
-        len(train_subset), len(val_subset)))
-    set_seed()
-    trainloader = DataLoader(train_subset, batch_size=int(config['batch_size']),
-                             shuffle=True, num_workers=1,
-                             worker_init_fn=seed_worker)
-
-    valloader = DataLoader(val_subset, batch_size=int(config['batch_size']),
-                           shuffle=True, num_workers=1,
-                           worker_init_fn=seed_worker)
     # Number of features / matrix size
     nbr_features = loaded_stuff[1].shape[1]
     matrix_size = loaded_stuff[1].shape[2]
@@ -116,75 +77,119 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             net.load_state_dict(model_state)
             optimizer.load_state_dict(optimizer_state)
 
-    writer = SummaryWriter()
-    for epoch in range(num_epoch):
-        net.train()
-        running_loss = 0.0
-        preds = []
-        ytrue = []
-        for batch_idx, (inputs, tabs, targets) in enumerate(trainloader):
-            if use_cuda:
-                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
-            optimizer.zero_grad()
+    # Prepare train/val with data augmentation
+    transform = transforms.Compose([add_connections(), remove_connections()])
+    trainset_ori = ConnectomeDataset(loaded_stuff, mode='train',
+                                     transform=False)
+    trainset_add_rem = ConnectomeDataset(loaded_stuff, mode='train',
+                                         transform=transform)
+    trainset_noise = ConnectomeDataset(loaded_stuff, mode='train',
+                                       transform=add_noise())
+    trainset_spike = ConnectomeDataset(loaded_stuff, mode='train',
+                                       transform=add_spike())
+    trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
+                                         transform=remove_row_column())
+    trainset = ConcatDataset([trainset_ori, trainset_add_rem,
+                              trainset_noise, trainset_spike,
+                              trainset_row_col])
 
-            tabs = None if nbr_tabular == 0 else tabs
-            outputs = net(inputs, tabs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
+    # Split training set in two (train/validation)
+    all_idx = np.arange(len(trainset))
+    random.shuffle(all_idx)
+    nb_fold = 5
+    all_idx = np.arange(len(trainset))
+    if nb_fold:
+        kf_split = KFold(n_splits=nb_fold, shuffle=True, random_state=42)
+        split_method = kf_split.split(all_idx)
+    else:
+        split_pos = int(len(all_idx) * 0.8)
+        split_method = [[all_idx[:split_pos], all_idx[split_pos:]]]
 
-            # print statistics
-            running_loss += loss.data.item()
-            if use_cuda:
-                outputs, targets = outputs.cpu(), targets.cpu()
+    for fold, (train_idx, val_idx) in enumerate(split_method):
+        color_print('Fold #{}, Datasets (with augmentation): '
+                    '{} train and {} val'.format(
+                        fold, len(train_idx), len(val_idx)))
 
-            preds.append(outputs.detach().numpy())
-            ytrue.append(targets.detach().numpy())
+        train_sampler = SubsetRandomSampler(train_idx)
+        test_sampler = SubsetRandomSampler(val_idx)
 
-        loss_train = running_loss/(batch_idx+1)
-        acc_score_train = accuracy_score(np.vstack(preds).argmax(axis=1),
-                                         np.hstack(ytrue))
-        # print('train',epoch,acc_score_train)
-        writer.add_scalar('Loss/train', loss_train, epoch)
-        writer.add_scalar('Accuracy/train', acc_score_train, epoch)
+        set_seed()
+        trainloader = DataLoader(trainset, batch_size=int(config['batch_size']),
+                                 num_workers=1, sampler=train_sampler,
+                                 worker_init_fn=seed_worker)
 
-        # VALIDATION
-        net.eval()
-        test_loss = 0
-        running_loss = 0.0
-        preds = []
-        ytrue = []
-        for batch_idx, (inputs, tabs, targets) in enumerate(valloader):
-            if use_cuda:
-                inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
-            with torch.no_grad():
+        valloader = DataLoader(trainset, batch_size=int(config['batch_size']),
+                               num_workers=1, sampler=test_sampler,
+                               worker_init_fn=seed_worker)
+        writer = SummaryWriter()
+        for epoch in range(num_epoch):
+            net.train()
+            running_loss = 0.0
+            preds = []
+            ytrue = []
+            for batch_idx, (inputs, tabs, targets) in enumerate(trainloader):
+                if use_cuda:
+                    inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
+                optimizer.zero_grad()
+
                 tabs = None if nbr_tabular == 0 else tabs
                 outputs = net(inputs, tabs)
                 loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
 
-                test_loss += loss.data.item()
-
+                # print statistics
+                running_loss += loss.data.item()
                 if use_cuda:
                     outputs, targets = outputs.cpu(), targets.cpu()
 
-                preds.append(outputs.numpy())
-                ytrue.append(targets.numpy())
+                preds.append(outputs.detach().numpy())
+                ytrue.append(targets.detach().numpy())
 
-            running_loss += loss.data.item()
+            loss_train = running_loss/(batch_idx+1)
+            acc_score_train = accuracy_score(np.vstack(preds).argmax(axis=1),
+                                             np.hstack(ytrue))
+            # print('train',epoch,acc_score_train)
+            writer.add_scalar('Loss/train', loss_train, epoch)
+            writer.add_scalar('Accuracy/train', acc_score_train, epoch)
 
-        # print('val',running_loss, batch_idx)
-        loss_val = running_loss/(batch_idx+1)
-        acc_score_val = accuracy_score(np.vstack(preds).argmax(axis=1),
-                                       np.hstack(ytrue))
-        # print('val',epoch,acc_score_val)
-        writer.add_scalar('Loss/val', loss_val, epoch)
-        writer.add_scalar('Accuracy/val', acc_score_val, epoch)
+            # VALIDATION
+            net.eval()
+            test_loss = 0
+            running_loss = 0.0
+            preds = []
+            ytrue = []
+            for batch_idx, (inputs, tabs, targets) in enumerate(valloader):
+                if use_cuda:
+                    inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
+                with torch.no_grad():
+                    tabs = None if nbr_tabular == 0 else tabs
+                    outputs = net(inputs, tabs)
+                    loss = criterion(outputs, targets)
 
-        with tune.checkpoint_dir(epoch) as checkpoint_dir:
-            path = os.path.join(checkpoint_dir, "checkpoint")
-            torch.save((net.state_dict(), optimizer.state_dict()), path)
+                    test_loss += loss.data.item()
 
-        tune.report(loss=loss_val, accuracy=acc_score_val)
+                    if use_cuda:
+                        outputs, targets = outputs.cpu(), targets.cpu()
+
+                    preds.append(outputs.numpy())
+                    ytrue.append(targets.numpy())
+
+                running_loss += loss.data.item()
+
+            # print('val',running_loss, batch_idx)
+            loss_val = running_loss/(batch_idx+1)
+            acc_score_val = accuracy_score(np.vstack(preds).argmax(axis=1),
+                                           np.hstack(ytrue))
+            # print('val',epoch,acc_score_val)
+            writer.add_scalar('Loss/val', loss_val, epoch)
+            writer.add_scalar('Accuracy/val', acc_score_val, epoch)
+
+            with tune.checkpoint_dir(epoch) as checkpoint_dir:
+                path = os.path.join(checkpoint_dir, "checkpoint")
+                torch.save((net.state_dict(), optimizer.state_dict()), path)
+
+            tune.report(loss=loss_val, accuracy=acc_score_val)
 
 
 def test_classification(result, in_folder, in_labels):

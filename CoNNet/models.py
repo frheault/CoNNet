@@ -1,14 +1,11 @@
 #!/usr/bin/env python
 
 import torch
-import numpy as np
-
 import torch.nn.functional as F
-import torch.nn
-from torch.autograd import Variable
 
-import torch.backends.cudnn as cudnn
 from CoNNet.layers import E2EBlock
+
+
 use_cuda = torch.cuda.is_available()
 
 

@@ -5,16 +5,16 @@
 """
 
 import argparse
+from functools import partial
 import os
-from CoNNet.train import train_classification, test_classification, load_data
+import shutil
+
+import coloredlogs
 from ray import tune, init, shutdown
 from ray.tune import CLIReporter
-from ray.tune.schedulers import ASHAScheduler
-import numpy as np
-from functools import partial
-import shutil
-import logging
-import coloredlogs
+
+from CoNNet.train import (train_classification,
+                          test_classification)
 
 
 def _build_arg_parser():
