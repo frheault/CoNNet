@@ -44,11 +44,12 @@ def seed_worker(worker_id):
 
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                          checkpoint_dir=None):
+    to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
+                  'sc_vol_normalized.npy', 'commit2_weights.npy']
+
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
-                             features_filename_exclude=['tot_commit2_weights.npy',
-                                                        'sc_edge_normalized.npy',
-                                                        'sc_vol_normalized.npy'])
+                             features_filename_exclude=to_exclude)
 
     # Prepare train/val with data augmentation
     # 1) Add and remove connections
@@ -192,11 +193,11 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
 
 
 def test_classification(result, in_folder, in_labels):
+    to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
+                  'sc_vol_normalized.npy', 'commit2_weights.npy']
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
-                             features_filename_exclude=['tot_commit2_weights.npy',
-                                                        'sc_edge_normalized.npy',
-                                                        'sc_vol_normalized.npy'])
+                             features_filename_exclude=to_exclude)
     # Handle separately the test set
     testset = ConnectomeDataset(loaded_stuff, mode='test',
                                 transform=False)
