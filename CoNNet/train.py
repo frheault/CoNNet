@@ -3,7 +3,8 @@
 
 import os
 from CoNNet.utils import (load_data, ConnectomeDataset,
-                          add_noise, add_connections, remove_connections)
+                          add_noise, add_connections, remove_connections,
+                          add_spike, remove_row_column)
 from CoNNet.models import BrainNetCNN
 import torch
 import numpy as np
@@ -59,11 +60,18 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                                          transform=transform)
     trainset_noise = ConnectomeDataset(loaded_stuff, mode='train',
                                        transform=add_noise())
-    trainset = ConcatDataset([trainset_ori, trainset_add_rem, trainset_noise])
+    trainset_spike = ConnectomeDataset(loaded_stuff, mode='train',
+                                       transform=add_spike())
+    trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
+                                         transform=remove_row_column())
+    trainset = ConcatDataset([trainset_ori, trainset_add_rem,
+                              trainset_noise, trainset_spike,
+                              trainset_row_col])
+
 
     # Split training set in two (train/validation)
     len_ts = len(trainset)
-    rng = torch.Generator().manual_seed(42)
+    rng = torch.Generator().manual_seed(0)
     test_abs = int(len_ts * 0.8)
     train_subset, val_subset = random_split(trainset,
                                             [test_abs, len_ts - test_abs],

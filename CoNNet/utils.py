@@ -158,11 +158,30 @@ class add_noise(object):
     """ Add noise to existing connections, centered at 0 with STD of 0.025 """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         for i in range(len(array)):
             tmp_arr = array[i].numpy()
-            non_zeros = np.count_nonzero(tmp_arr)
-            tmp_arr[tmp_arr > 0] += np.random.normal(0, 0.025, non_zeros)
+            shape = tmp_arr.shape
+            noise = np.random.normal(0, 0.025,
+                                     np.prod(shape)).reshape(shape)
+            minval = np.min(tmp_arr[np.nonzero(tmp_arr)])
+            noise[tmp_arr < minval] = 0
+            noise = np.triu(noise) + np.triu(noise, k=1).T
+            tmp_arr += noise
+
+        return array
+
+
+class remove_row_column(object):
+    """ Add noise to existing connections, centered at 0 with STD of 0.025 """
+
+    def __call__(self, array):
+        # np.random.seed(0)
+        idx = int(np.random.rand() * array[0].numpy().shape[0])
+        for i in range(len(array)):
+            tmp_arr = array[i].numpy()
+            tmp_arr[:, idx] = 0
+            tmp_arr[idx, :] = 0
 
         return array
 
@@ -172,15 +191,17 @@ class add_connections(object):
         values similar to the noise (above) """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         tmp_arr = array.numpy()
+        
         shape = tmp_arr.shape[1:3]
         total_new_conn = np.prod(shape) // 100
         positions = random.sample(np.argwhere(tmp_arr[0] == 0).tolist(),
                                   total_new_conn)
         for pos in positions:
-            tmp_arr[:, pos[0], pos[1]] = np.abs(np.random.normal(
-                0, 0.05, len(tmp_arr)))
+            noise = np.abs(np.random.normal(0, 0.05, len(tmp_arr)))
+            tmp_arr[:, pos[0], pos[1]] = noise
+            tmp_arr[:, pos[1], pos[0]] = noise
 
         return array
 
@@ -189,7 +210,7 @@ class remove_connections(object):
     """ Removes connections to matrices, -1% new connections force to zero """
 
     def __call__(self, array):
-        np.random.seed(0)
+        # np.random.seed(0)
         tmp_arr = array.numpy()
         shape = tmp_arr.shape[1:3]
         total_new_conn = np.prod(shape) // 100
@@ -197,5 +218,23 @@ class remove_connections(object):
                                   total_new_conn)
         for pos in positions:
             tmp_arr[:, pos[0], pos[1]] = 0
+            tmp_arr[:, pos[1], pos[0]] = 0
+
+        return array
+
+
+class add_spike(object):
+    """ Add connections to matrices, +1% new connections with positive
+        values similar to the noise (above) """
+
+    def __call__(self, array):
+        # np.random.seed(0)
+        tmp_arr = array.numpy()
+        pos = int(np.random.rand()*tmp_arr.shape[1]), int(np.random.rand()*tmp_arr.shape[1])
+        which_array = int(np.random.rand() * len(tmp_arr))
+
+        tmp_arr[which_array, pos[0], pos[1]] = 10
+        tmp_arr[which_array, pos[1], pos[0]] = 10
+        tmp_arr[which_array, :, :] /= 10
 
         return array
