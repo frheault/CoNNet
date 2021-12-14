@@ -16,7 +16,7 @@ from ray import tune
 
 from CoNNet.utils import (color_print, load_data, ConnectomeDataset,
                           add_noise, add_connections, remove_connections,
-                          remove_row_column, add_spike)
+                          remove_row_column, balance_sampler)
 from CoNNet.models import BrainNetCNN
 
 
@@ -64,11 +64,15 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
 
     momentum = 0.9
     lr = config['lr']
-    wd = 0.0005
+    wd = config['wd']
 
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(net.parameters(), lr=lr,
-                                momentum=momentum, weight_decay=wd)
+    class_imbalance = torch.tensor([1.6, 0.625]).cuda()
+    # class_imbalance = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0]).cuda()
+    # class_imbalance.cuda()
+    criterion = torch.nn.NLLLoss(weight=class_imbalance, reduction='mean')
+    # criterion = torch.nn.CrossEntropyLoss(weight=class_imbalance, reduction='mean')
+    # Adam
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
 
     if checkpoint_dir:
         filename = os.path.join(checkpoint_dir, "checkpoint")
@@ -85,18 +89,15 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                                          transform=transform)
     trainset_noise = ConnectomeDataset(loaded_stuff, mode='train',
                                        transform=add_noise())
-    trainset_spike = ConnectomeDataset(loaded_stuff, mode='train',
-                                       transform=add_spike())
     trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
                                          transform=remove_row_column())
     trainset = ConcatDataset([trainset_ori, trainset_add_rem,
-                              trainset_noise, trainset_spike,
-                              trainset_row_col])
+                              trainset_noise, trainset_row_col])
 
     # Split training set in two (train/validation)
     all_idx = np.arange(len(trainset))
     random.shuffle(all_idx)
-    nb_fold = 5
+    nb_fold = False
     all_idx = np.arange(len(trainset))
     if nb_fold:
         kf_split = KFold(n_splits=nb_fold, shuffle=True, random_state=42)
@@ -110,8 +111,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                     '{} train and {} val'.format(
                         fold, len(train_idx), len(val_idx)))
 
+        balance_sampler(trainset, train_idx)
         train_sampler = SubsetRandomSampler(train_idx)
-        test_sampler = SubsetRandomSampler(val_idx)
+        val_sampler = SubsetRandomSampler(val_idx)
 
         set_seed()
         trainloader = DataLoader(trainset, batch_size=int(config['batch_size']),
@@ -119,7 +121,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                                  worker_init_fn=seed_worker)
 
         valloader = DataLoader(trainset, batch_size=int(config['batch_size']),
-                               num_workers=1, sampler=test_sampler,
+                               num_workers=1, sampler=val_sampler,
                                worker_init_fn=seed_worker)
         writer = SummaryWriter()
         for epoch in range(num_epoch):
@@ -134,6 +136,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
 
                 tabs = None if nbr_tabular == 0 else tabs
                 outputs = net(inputs, tabs)
+
                 loss = criterion(outputs, targets)
                 loss.backward()
                 optimizer.step()
@@ -181,6 +184,11 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             loss_val = running_loss/(batch_idx+1)
             acc_score_val = accuracy_score(np.vstack(preds).argmax(axis=1),
                                            np.hstack(ytrue))
+
+            color_print(np.vstack(preds).argmax(axis=1))
+            color_print(np.hstack(ytrue))
+            print()
+
             # print('val',epoch,acc_score_val)
             writer.add_scalar('Loss/val', loss_val, epoch)
             writer.add_scalar('Accuracy/val', acc_score_val, epoch)
@@ -259,7 +267,8 @@ def test_classification(result, in_folder, in_labels):
     loss_test = running_loss/batch_idx
     acc_score_test = accuracy_score(np.vstack(preds).argmax(axis=1),
                                     np.hstack(ytrue))
-
+    color_print(np.vstack(preds).argmax(axis=1))
+    color_print(np.hstack(ytrue))
     print('Loss/test', loss_test)
     print('Accuracy/test', acc_score_test)
     print(best_trial.config)

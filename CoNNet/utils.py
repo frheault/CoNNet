@@ -23,8 +23,8 @@ def read_matrix(filepath):
     elif ext == '.npy':
         data = np.load(filepath)
 
-    if 'vol' in filepath or 'sc' in filepath:
-        data[data > 0] = np.log10(data[data > 0])
+    if 'vol' in filepath or 'sc' in filepath or 'commit' in filepath:
+        data[data > 0.00001] = np.log10(data[data > 0.00001])
 
     return data / np.max(data)
 
@@ -47,11 +47,12 @@ def load_data(directory_path, labels_path,
 
     subj_id = labels_data.index.tolist()
     labels = labels_data['labels'].tolist()
+    pairing = labels_data['pairing'].tolist()
 
     if len(labels_data.columns) > 1:
         nbr_tab = 0
         extra_tabular = []
-        for i in range(1, len(labels_data.columns)):
+        for i in range(2, len(labels_data.columns)):
             tab = labels_data[labels_data.columns[i]].tolist()
             extra_tabular.append(tab)
             nbr_tab += 1
@@ -63,10 +64,10 @@ def load_data(directory_path, labels_path,
         (len(labels), nbr_tab)).tolist()
 
     # Shuffle the ordering
-    tmp = list(zip(subj_id, labels, extra_tabular))
+    tmp = list(zip(subj_id, labels, extra_tabular, pairing))
     random.seed(0)
     random.shuffle(tmp)
-    subj_id, labels, extra_tabular = zip(*tmp)
+    subj_id, labels, extra_tabular, pairing = zip(*tmp)
 
     if features_filename_include is None:
         features_filename_include = []
@@ -101,8 +102,15 @@ def load_data(directory_path, labels_path,
     features_matrices = np.swapaxes(features_matrices, 1, 3)
     extra_tabular = np.array(extra_tabular, dtype=np.float)
 
-    return labels, features_matrices, extra_tabular
+    return labels, features_matrices, extra_tabular, pairing
 
+
+def balance_sampler(dataset, idx):
+    # labels = []
+    # for i in idx:
+    #     labels.append(dataset[i][2].tolist())
+    # print(labels)
+    return    
 
 class ConnectomeDataset(torch.utils.data.Dataset):
     def __init__(self, loaded_data,
@@ -113,20 +121,33 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         Args:
 
         """
-        labels, features_matrices, extra_tabular = loaded_data
+        labels, features_matrices, extra_tabular, pairing = loaded_data
         self.mode = mode
         self.transform = transform
 
-        split_ratio = 0.60
-        idx_train = list(range(int(len(labels)*split_ratio)))
-        idx_test = list(range(int(len(labels)*split_ratio), len(labels)))
+        split_ratio = 0.6
+        # Since pair of session are allowed, both sessions must be in the same
+        # set of data. So we select IDs based on the unique individual, not the
+        # session
+        idx_train = list(range(int(len(np.unique(pairing))*split_ratio)))
+        idx_test = list(range(int(len(np.unique(pairing))*split_ratio),
+                              len(np.unique(pairing))))
         func_name = 'a' if transform else 'no'
-
         if self.mode == 'train':
-            x = features_matrices[idx_train, ...]
-            y = labels[idx_train, ...]
-            t = extra_tabular[idx_train, ...]
+            true_idx = []
+            for idx in idx_train:
+                tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
+                # true_idx.extend(tmp)
+                true_idx.append(tmp[0])
+            x = features_matrices[true_idx, ...]
+            y = labels[true_idx, ...]
+            t = extra_tabular[true_idx, ...]
         elif self.mode == 'test':
+            true_idx = []
+            for idx in idx_train:
+                tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
+                # true_idx.extend(tmp)
+                true_idx.append(tmp[0])
             x = features_matrices[idx_test, ...]
             y = labels[idx_test, ...]
             t = extra_tabular[idx_test, ...]
@@ -218,23 +239,5 @@ class remove_connections(object):
         for pos in positions:
             tmp_arr[:, pos[0], pos[1]] = 0
             tmp_arr[:, pos[1], pos[0]] = 0
-
-        return array
-
-
-class add_spike(object):
-    """ Add connections to matrices, +1% new connections with positive
-        values similar to the noise (above) """
-
-    def __call__(self, array):
-        # np.random.seed(0)
-        tmp_arr = array.numpy()
-        pos = int(np.random.rand() *
-                  tmp_arr.shape[1]), int(np.random.rand()*tmp_arr.shape[1])
-        which_array = int(np.random.rand() * len(tmp_arr))
-
-        tmp_arr[which_array, pos[0], pos[1]] = 10
-        tmp_arr[which_array, pos[1], pos[0]] = 10
-        tmp_arr[which_array, :, :] /= 10
 
         return array

@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from CoNNet.layers import E2EBlock
 
@@ -15,6 +16,7 @@ class BrainNetCNN(torch.nn.Module):
         super(BrainNetCNN, self).__init__()
         self.num_channels = nbr_channels
         self.d = matrix_size
+        self.dropout = nn.Dropout(0.5)
 
         # For matrices
         self.e2econv1 = E2EBlock(self.num_channels, l1, matrix_size,
@@ -25,6 +27,7 @@ class BrainNetCNN(torch.nn.Module):
         self.N2G = torch.nn.Conv2d(1, l3, (self.d, 1))
         self.dense1 = torch.nn.Linear(l3, l2)
         self.dense2 = torch.nn.Linear(l2+nbr_tabular, l1)
+        # self.dense3 = torch.nn.Linear(l1, nbr_class)
         self.dense3 = torch.nn.Linear(l1, nbr_class)
 
         # for tabular data (if a lot)
@@ -32,29 +35,32 @@ class BrainNetCNN(torch.nn.Module):
         #     self.tabular_dense1 = torch.nn.Linear(21, 16)
 
     def forward(self, x, t=None):
-        out = F.leaky_relu(self.e2econv1(x), negative_slope=0.33)
-        out = F.leaky_relu(self.e2econv2(out), negative_slope=0.33)
-        out = F.leaky_relu(self.E2N(out), negative_slope=0.33)
-        out = F.dropout(F.leaky_relu(self.N2G(out),
-                                     negative_slope=0.33),
-                        p=0.5)
+        out = F.leaky_relu(self.e2econv1(x),
+                           negative_slope=0.33)
+        out = F.leaky_relu(self.e2econv2(out),
+                           negative_slope=0.33)
+        out = F.leaky_relu(self.E2N(out),
+                           negative_slope=0.33)
+
+        out = self.dropout(F.leaky_relu(self.N2G(out),
+                                        negative_slope=0.33))
         out = out.view(out.size(0), -1)
-        out = F.dropout(F.leaky_relu(self.dense1(out),
-                                     negative_slope=0.33),
-                        p=0.5)
+        out = self.dropout(F.leaky_relu(self.dense1(out),
+                                        negative_slope=0.33))
 
         if t is None:
-            out = F.dropout(F.leaky_relu(self.dense2(out),
-                                         negative_slope=0.33),
-                            p=0.5)
+            out = self.dropout(F.leaky_relu(self.dense2(out),
+                                            negative_slope=0.33))
         else:
             # for tabular data (simplify, then concat)
             # tab = self.tabular_dense1(t)
             # tab = self.relu(tab)
             out = torch.cat((out, t), dim=1)
-            out = F.dropout(F.leaky_relu(self.dense2(out),
-                                         negative_slope=0.33),
-                            p=0.5)
-        out = F.leaky_relu(self.dense3(out), negative_slope=0.33)
+            out = self.dropout(F.leaky_relu(self.dense2(out),
+                                            negative_slope=0.33))
+
+        # out = F.leaky_relu(self.dense3(out), negative_slope=0.33)
+        m = torch.nn.LogSoftmax(dim=1)
+        out = m(self.dense3(out))
 
         return out
