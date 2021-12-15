@@ -71,28 +71,35 @@ def main():
     in_labels = os.path.join(os.getcwd(), args.in_labels)
 
     init()
+    # config = {
+    #     "l1": tune.choice([16, 32]),
+    #     "l2": tune.choice([32, 64]),
+    #     "l3": tune.choice([128, 256]),
+    #     "lr": tune.choice([0.001, 0.0005]),
+    #     "batch_size": tune.choice([25, 50]),
+    #     "wd": tune.choice([0.01, 0.005])
+    # }
     config = {
-        "l1": tune.choice([64]),
-        "l2": tune.choice([128]),
-        "l3": tune.choice([256]),
+        "l1": tune.choice([32]),
+        "l2": tune.choice([64]),
+        "l3": tune.choice([128]),
         "lr": tune.choice([0.001]),
         "batch_size": tune.choice([50]),
-        "wd": tune.choice([0.005])
+        "wd": tune.choice([0.0005])
     }
-    
     # Best scanner classif
     # config = {
     #     "l1": tune.choice([64]),
     #     "l2": tune.choice([128]),
     #     "l3": tune.choice([256]),
-    #     "lr": tune.choice([0.001]),
+    #     "lr": tune.choice([0.005]),
     #     "batch_size": tune.choice([50]),
-    #     "wd": tune.choice([0.005])
+    #     "wd": tune.choice([0.0005])
     # }
 
     reporter = CLIReporter(
         parameter_columns=["l1", "l2", 'l3', "lr", "wd", "batch_size"],
-        metric_columns=["loss", "accuracy", "training_iteration"])
+        metric_columns=["loss", "accuracy", "f1_score", "training_iteration"])
 
     result = tune.run(
         partial(train_classification,

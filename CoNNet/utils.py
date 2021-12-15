@@ -106,11 +106,27 @@ def load_data(directory_path, labels_path,
 
 
 def balance_sampler(dataset, idx):
-    # labels = []
-    # for i in idx:
-    #     labels.append(dataset[i][2].tolist())
-    # print(labels)
-    return    
+    labels = []
+    for i in idx:
+        labels.append(int(dataset[i][2]))
+
+    labels = np.array(labels)
+    uniq = np.unique(labels)
+    w = np.zeros(len(uniq))
+    prob_dist = np.zeros(len(labels), dtype=float)
+
+    for i, u in enumerate(uniq):
+        w[i] = 1 - len(np.where(labels == u)[0]) / len(labels)
+        prob_dist[labels == u] = w[i]
+        # print(i, u, len(np.where(labels == u)[0]), len(labels))
+
+    print('************')
+    print(uniq, w)
+    print(labels)
+    print(prob_dist)
+    print()
+    return prob_dist
+
 
 class ConnectomeDataset(torch.utils.data.Dataset):
     def __init__(self, loaded_data,
@@ -193,15 +209,18 @@ class add_noise(object):
 
 
 class remove_row_column(object):
-    """ Add noise to existing connections, centered at 0 with STD of 0.025 """
+    """ """
 
     def __call__(self, array):
         # np.random.seed(0)
-        idx = int(np.random.rand() * array[0].numpy().shape[0])
-        for i in range(len(array)):
-            tmp_arr = array[i].numpy()
-            tmp_arr[:, idx] = 0
-            tmp_arr[idx, :] = 0
+        num_row_col = array[0].numpy().shape[0]
+        to_remove = min(int(num_row_col / 50), 1)
+        idx_list = np.random.rand(to_remove) * num_row_col
+        # for i in range(len(array)):
+        for idx in idx_list:
+            tmp_arr = array.numpy()
+            tmp_arr[: ,:, idx] = 0
+            tmp_arr[:, idx, :] = 0
 
         return array
 
@@ -233,7 +252,7 @@ class remove_connections(object):
         # np.random.seed(0)
         tmp_arr = array.numpy()
         shape = tmp_arr.shape[1:3]
-        total_new_conn = np.prod(shape) // 100
+        total_new_conn = np.prod(shape) // 20
         positions = random.sample(np.argwhere(tmp_arr[0] > 0).tolist(),
                                   total_new_conn)
         for pos in positions:
