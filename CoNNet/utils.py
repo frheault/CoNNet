@@ -218,6 +218,7 @@ class remove_row_column(object):
         idx_list = np.random.rand(to_remove) * num_row_col
         # for i in range(len(array)):
         for idx in idx_list:
+            idx = int(idx)
             tmp_arr = array.numpy()
             tmp_arr[: ,:, idx] = 0
             tmp_arr[:, idx, :] = 0
