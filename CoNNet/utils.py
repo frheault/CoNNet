@@ -80,6 +80,10 @@ def load_data(directory_path, labels_path,
             if filename in features_filename_include:
                 features_filename_include.remove(filename)
 
+    color_print('Loading data using {} features'.format(len(features_filename_include)))
+    color_print(features_filename_include)
+    print()
+
     for subj in subj_id:
         base_matrix = read_matrix(os.path.join(directory_path, subj,
                                                features_filename_include[0]))
@@ -120,10 +124,9 @@ def balance_sampler(dataset, idx):
         prob_dist[labels == u] = w[i]
         # print(i, u, len(np.where(labels == u)[0]), len(labels))
 
-    print('************')
-    print(uniq, w)
-    print(labels)
-    print(prob_dist)
+    print()
+    color_print('Rebalanced sampler with probability {} for class {}'.format(
+        w, uniq))
     print()
     return prob_dist
 
@@ -164,6 +167,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
                 # true_idx.extend(tmp)
                 true_idx.append(tmp[0])
+
             x = features_matrices[idx_test, ...]
             y = labels[idx_test, ...]
             t = extra_tabular[idx_test, ...]
@@ -196,7 +200,7 @@ class add_noise(object):
         # np.random.seed(0)
         for i in range(len(array)):
             tmp_arr = array[i].numpy()
-            noise_level = np.percentile(tmp_arr[tmp_arr > 0], 10)
+            noise_level = np.std(tmp_arr[tmp_arr > 0]) / 10
             shape = tmp_arr.shape
             noise = np.random.normal(0, noise_level,
                                      np.prod(shape)).reshape(shape)
@@ -214,13 +218,13 @@ class remove_row_column(object):
     def __call__(self, array):
         # np.random.seed(0)
         num_row_col = array[0].numpy().shape[0]
-        to_remove = min(int(num_row_col / 50), 1)
+        to_remove = max(int(num_row_col / 50), 1)
         idx_list = np.random.rand(to_remove) * num_row_col
         # for i in range(len(array)):
         for idx in idx_list:
             idx = int(idx)
             tmp_arr = array.numpy()
-            tmp_arr[: ,:, idx] = 0
+            tmp_arr[:, :, idx] = 0
             tmp_arr[:, idx, :] = 0
 
         return array
@@ -252,8 +256,8 @@ class remove_connections(object):
     def __call__(self, array):
         # np.random.seed(0)
         tmp_arr = array.numpy()
-        shape = tmp_arr.shape[1:3]
-        total_new_conn = np.prod(shape) // 20
+        positions = np.argwhere(tmp_arr[0] > 0).tolist()
+        total_new_conn = len(positions) // 10
         positions = random.sample(np.argwhere(tmp_arr[0] > 0).tolist(),
                                   total_new_conn)
         for pos in positions:

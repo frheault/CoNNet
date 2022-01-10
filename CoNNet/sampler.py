@@ -11,18 +11,16 @@ class WeightedRandomSampler(Sampler[int]):
     r"""Samples elements from ``[0,..,len(weights)-1]`` with given probabilities (weights).
 
     Args:
-        weights (sequence)   : a sequence of weights, not necessary summing up to one
+        indices (sequence)   : a sequence of indices to the original dataset 
+            slicing organisation
+        weights (sequence)   : a sequence of weights, not necessary summing
+        up to one
         num_samples (int): number of samples to draw
         replacement (bool): if ``True``, samples are drawn with replacement.
             If not, they are drawn without replacement, which means that when a
-            sample index is drawn for a row, it cannot be drawn again for that row.
+            sample index is drawn for a row, it cannot be drawn again for
+            that row.
         generator (Generator): Generator used in sampling.
-
-    Example:
-        >>> list(WeightedRandomSampler([0.1, 0.9, 0.4, 0.7, 3.0, 0.6], 5, replacement=True))
-        [4, 4, 1, 4, 5]
-        >>> list(WeightedRandomSampler([0.9, 0.4, 0.05, 0.2, 0.3, 0.1], 5, replacement=False))
-        [0, 1, 4, 3, 2]
     """
     indices: Sequence[int]
     weights: Tensor
@@ -41,7 +39,9 @@ class WeightedRandomSampler(Sampler[int]):
         self.generator = generator
 
     def __iter__(self) -> Iterator[int]:
-        rand_tensor = torch.multinomial(self.weights, self.num_samples, self.replacement, generator=self.generator)
+        rand_tensor = torch.multinomial(self.weights, self.num_samples,
+                                        self.replacement,
+                                        generator=self.generator)
         for i in rand_tensor.tolist():
             yield self.indices[i]
 

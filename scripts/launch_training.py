@@ -33,10 +33,17 @@ def _build_arg_parser():
                    help='')
     p.add_argument('--num_samples', type=int, default=1,
                    help='')
+
     p2 = p.add_mutually_exclusive_group()
-    p2.add_argument('--resume', action='store_true',
+    p2.add_argument('--include', nargs='+',
                     help='')
-    p2.add_argument('--overwrite', action='store_true',
+    p2.add_argument('--exclude', nargs='+',
+                    help='')
+
+    p3 = p.add_mutually_exclusive_group()
+    p3.add_argument('--resume', action='store_true',
+                    help='')
+    p3.add_argument('--overwrite', action='store_true',
                     help='')
     p.add_argument('--log_level', default='INFO',
                    help='')
@@ -53,7 +60,7 @@ def main():
             parser.error('Folder exists, use --overwrite or --resume.')
         elif args.overwrite:
             shutil.rmtree(exp_folder)
-    if os.path.isdir(exp_folder) and not os.listdir(exp_folder) \
+    if not os.path.isdir(exp_folder) or not os.listdir(exp_folder) \
             and args.resume:
         args.resume = None
 
@@ -71,30 +78,22 @@ def main():
     in_labels = os.path.join(os.getcwd(), args.in_labels)
 
     init()
+    # Best scanner classif
     # config = {
-    #     "l1": tune.choice([16, 32]),
-    #     "l2": tune.choice([32, 64]),
-    #     "l3": tune.choice([128, 256]),
-    #     "lr": tune.choice([0.001, 0.0005]),
-    #     "batch_size": tune.choice([25, 50]),
-    #     "wd": tune.choice([0.01, 0.005])
-    # }
-    # config = {
-    #     "l1": tune.choice([32]),
-    #     "l2": tune.choice([64]),
-    #     "l3": tune.choice([128]),
-    #     "lr": tune.choice([0.001]),
+    #     "l1": tune.choice([64]),
+    #     "l2": tune.choice([128]),
+    #     "l3": tune.choice([256]),
+    #     "lr": tune.choice([0.005]),
     #     "batch_size": tune.choice([50]),
     #     "wd": tune.choice([0.0005])
     # }
-    # Best scanner classif
     config = {
         "l1": tune.choice([64]),
         "l2": tune.choice([128]),
         "l3": tune.choice([256]),
-        "lr": tune.choice([0.005]),
+        "lr": tune.choice([0.01]),
         "batch_size": tune.choice([50]),
-        "wd": tune.choice([0.0005])
+        "wd": tune.choice([0.005])
     }
 
     reporter = CLIReporter(
@@ -105,7 +104,9 @@ def main():
         partial(train_classification,
                 in_folder=in_folder,
                 in_labels=in_labels,
-                num_epoch=args.epoch),
+                num_epoch=args.epoch,
+                filenames_to_include=args.include,
+                filenames_to_exclude=args.exclude),
         name=args.exp_name,
         resources_per_trial={"cpu": 2, "gpu": 1},
         config=config,
@@ -115,7 +116,9 @@ def main():
         resume=args.resume,
         local_dir=args.out_folder)
 
-    test_classification(result, in_folder, in_labels)
+    test_classification(result, in_folder, in_labels,
+                        filenames_to_include=args.include,
+                        filenames_to_exclude=args.exclude)
     shutdown()
 
 
