@@ -42,9 +42,10 @@ def seed_worker(worker_id):
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                          checkpoint_dir=None, filenames_to_include=None,
                          filenames_to_exclude=None):
+    set_seed()
     if filenames_to_exclude is None:
         filenames_to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
-                    'sc_vol_normalized.npy', 'commit2_weights.npy']
+                                'sc_vol_normalized.npy', 'commit2_weights.npy']
 
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
@@ -52,9 +53,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                              features_filename_exclude=filenames_to_exclude)
 
     # Number of features / matrix size
-    nbr_features = loaded_stuff[1].shape[1]
-    matrix_size = loaded_stuff[1].shape[2]
-    nbr_class = np.max(len(np.unique(loaded_stuff[0])))
+    nbr_features = len(loaded_stuff[-1])
+    matrix_size = loaded_stuff[-2]
+    nbr_class = len(np.unique(loaded_stuff[1]))
     nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
         np.isnan(loaded_stuff[2])) else 0
 
@@ -64,7 +65,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
     if use_cuda:
         net = net.cuda(0)
         net = torch.nn.DataParallel(net, device_ids=[0])
-        # cudnn.benchmark = True
 
     momentum = 0.9
     lr = config['lr']
@@ -97,13 +97,13 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
     trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
                                          transform=remove_row_column())
     trainset = ConcatDataset([trainset_ori, trainset_add_rem,
-                              trainset_noise, trainset_row_col])
+                             trainset_noise, trainset_row_col])
 
     # Split training set in two (train/validation)
     all_idx = np.arange(len(trainset))
     random.shuffle(all_idx)
-    nb_fold = 5
-    all_idx = np.arange(len(trainset))
+    nb_fold = False
+    # all_idx = np.arange(len(trainset))
     if nb_fold:
         kf_split = KFold(n_splits=nb_fold, shuffle=True, random_state=42)
         split_method = kf_split.split(all_idx)
@@ -116,14 +116,17 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                     '{} train and {} val'.format(
                         fold, len(train_idx), len(val_idx)))
 
-        rng_cpu = torch.Generator()
-        rng_cpu.manual_seed(1066)
-        class_w = balance_sampler(trainset, train_idx)
-        train_sampler = WeightedRandomSampler(train_idx, class_w,
-                                              generator=rng_cpu)
-        class_w = balance_sampler(trainset, val_idx)
-        val_sampler = WeightedRandomSampler(val_idx, weights=class_w,
-                                            generator=rng_cpu)
+        # rng_cpu = torch.Generator()
+        # rng_cpu.manual_seed(1066)
+        # class_w = balance_sampler(trainset, train_idx)
+        # train_sampler = WeightedRandomSampler(train_idx, class_w,
+        #                                       generator=rng_cpu)
+        # class_w = balance_sampler(trainset, val_idx)
+        # val_sampler = WeightedRandomSampler(val_idx, weights=class_w,
+        #                                     generator=rng_cpu)
+
+        train_sampler = SubsetRandomSampler(train_idx)
+        val_sampler = SubsetRandomSampler(val_idx)
 
         set_seed()
         trainloader = DataLoader(trainset, batch_size=int(config['batch_size']),
@@ -221,38 +224,44 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
 
 
 def test_classification(result, in_folder, in_labels, filenames_to_include=None,
-                         filenames_to_exclude=None):
+                        filenames_to_exclude=None):
     if filenames_to_exclude is None:
         filenames_to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
-                    'sc_vol_normalized.npy', 'commit2_weights.npy']
+                                'sc_vol_normalized.npy', 'commit2_weights.npy']
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
                              features_filename_include=filenames_to_include,
                              features_filename_exclude=filenames_to_exclude)
     # Handle separately the test set
+    transform = transforms.Compose([add_connections(), remove_connections()])
     testset_ori = ConnectomeDataset(loaded_stuff, mode='test',
                                     transform=False)
-    # testset_noise = ConnectomeDataset(loaded_stuff, mode='test',
-                                    #   transform=add_noise())
-    testset = ConcatDataset([testset_ori])#, testset_noise])
+    testset_add_rem = ConnectomeDataset(loaded_stuff, mode='test',
+                                        transform=transform)
+    testset_noise = ConnectomeDataset(loaded_stuff, mode='test',
+                                      transform=add_noise())
+    testset_row_col = ConnectomeDataset(loaded_stuff, mode='test',
+                                        transform=remove_row_column())
+    testset = ConcatDataset([testset_ori])  # , testset_add_rem,
+    #                           testset_noise, testset_row_col])
 
     rng_cpu = torch.Generator()
     rng_cpu.manual_seed(2277)
     test_idx = list(range(len(testset)))
     class_w = balance_sampler(testset, test_idx)
-    test_sampler = WeightedRandomSampler(test_idx, class_w,
-                                         generator=rng_cpu)
-
+    # test_sampler = WeightedRandomSampler(test_idx, class_w,
+    #                                      generator=rng_cpu)
+    test_sampler = SubsetRandomSampler(test_idx)
     set_seed()
-    testloader = DataLoader(testset, batch_size=len(testset),
+    testloader = DataLoader(testset, batch_size=50,
                             num_workers=1, sampler=test_sampler,
                             worker_init_fn=seed_worker)
 
     best_trial = result.get_best_trial("loss", "min", "last")
     # Number of features / matrix size
-    nbr_features = loaded_stuff[1].shape[1]
-    matrix_size = loaded_stuff[1].shape[2]
-    nbr_class = np.max(len(np.unique(loaded_stuff[0])))
+    nbr_features = len(loaded_stuff[-1])
+    matrix_size = loaded_stuff[-2]
+    nbr_class = len(np.unique(loaded_stuff[1]))
     nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
         np.isnan(loaded_stuff[2])) else 0
     net = BrainNetCNN_single(nbr_features, matrix_size, nbr_class, nbr_tabular,
