@@ -22,19 +22,18 @@ def read_matrix(filepath):
         data = np.loadtxt(filepath).astype(np.float64)
     elif ext == '.npy':
         data = np.load(filepath).astype(np.float64)
+    
+    return data / np.percentile(data[data > 0.00001], 50)
+    if 'vol' in filepath or 'sc' in filepath or 'commit' in filepath:
+        data[data > 0.00001] = np.log10(data[data > 0.00001])
 
-    return data
-    # if 'vol' in filepath or 'sc' in filepath or 'commit' in filepath:
-    #     data[data > 0.00001] = np.log10(data[data > 0.00001])
-
-    # return data / np.max(data)
+    return data / np.max(data)
 
 
 def load_data(directory_path, labels_path,
               features_filename_include=None,
               features_filename_exclude=None,
               as_one_hot=False):
-    features_matrices = []
     labels_data = pd.read_excel(labels_path, index_col=0)
     drop_subj = 0
     for subj in labels_data.index.tolist():
@@ -64,7 +63,6 @@ def load_data(directory_path, labels_path,
     extra_tabular = np.array(extra_tabular).reshape(
         (len(labels), nbr_tab)).tolist()
 
-    # subj_id, labels, extra_tabular, pairing = subj_id[::-1], labels[::-1], extra_tabular[::-1], pairing[::-1]
     # Shuffle the ordering
     tmp = list(zip(subj_id, labels, extra_tabular, pairing))
     random.seed(0)
@@ -88,26 +86,8 @@ def load_data(directory_path, labels_path,
 
     matrix_size = read_matrix(os.path.join(directory_path, subj_id[0],
                                            features_filename_include[0])).shape[0]
-    # for subj in subj_id:
-    #     base_matrix = read_matrix(os.path.join(directory_path, subj,
-    #                                            features_filename_include[0]))
-    #     features = np.zeros(base_matrix.shape +
-    #                         (len(features_filename_include),))
-    #     for i, filename in enumerate(features_filename_include):
-    #         features[:, :, i] = read_matrix(os.path.join(directory_path, subj,
-    #                                                      filename))
-
-    #     features_matrices.append(features)
 
     labels = np.array(labels, dtype=np.int64)
-    # if as_one_hot:
-    #     tmp_labels = np.zeros((len(labels), np.max(labels)))
-    #     for i in range(len(labels)):
-    #         tmp_labels[i, labels[i]-1] = 1
-    #     labels = tmp_labels
-
-    # features_matrices = np.array(features_matrices, dtype=np.float)
-    # features_matrices = np.swapaxes(features_matrices, 1, 3)
     extra_tabular = np.array(extra_tabular, dtype=np.float64)
 
     subj_list = [os.path.join(directory_path, subj) for subj in subj_id]
@@ -164,12 +144,6 @@ class ConnectomeDataset(torch.utils.data.Dataset):
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
                 # true_idx.extend(tmp)
                 true_idx.append(int(tmp[0]))
-
-            # true_idx = np.array(true_idx, dtype=int)
-            # x = features_matrices[true_idx, ...]
-            # x = [subj_list[i] for i in true_idx]
-            # y = labels[true_idx, ...]
-            # t = extra_tabular[true_idx, ...]
         elif self.mode == 'test':
             true_idx = []
             for idx in idx_test:
@@ -188,7 +162,6 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.Y = torch.FloatTensor(y.astype(np.int64))
         self.T = torch.FloatTensor(t.astype(np.float64))
 
-        print(x)
     def __len__(self):
         return len(self.X)
 
@@ -207,6 +180,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         # extra_tabular = np.array(self.T, dtype=np.float)
         if self.transform:
             features = self.transform(features)
+
         sample = [features, self.T[idx], self.Y[idx]]
         return sample
 
@@ -222,7 +196,7 @@ class add_noise(object):
         # np.random.seed(0)
         for i in range(len(array)):
             tmp_arr = array[i].numpy()
-            noise_level = np.std(tmp_arr[tmp_arr > 0]) / 20
+            noise_level = np.std(tmp_arr[tmp_arr > 0])
             shape = tmp_arr.shape
             noise = np.random.normal(0, noise_level,
                                      np.prod(shape)).reshape(shape)
@@ -260,10 +234,10 @@ class add_connections(object):
         tmp_arr = array.numpy()
 
         positions = np.argwhere(tmp_arr[0] == 0).tolist()
-        total_new_conn = np.product(
-            tmp_arr.shape) // 100 if len(positions) else 0
+        total_new_conn = len(positions) // 10
+
         positions = random.sample(positions,
-                                  total_new_conn)
+                                  min(len(positions), total_new_conn))
         for pos in positions:
             noise = np.abs(np.random.normal(0, 0.05, len(tmp_arr)))
             tmp_arr[:, pos[0], pos[1]] = noise
@@ -279,10 +253,9 @@ class remove_connections(object):
         # np.random.seed(0)
         tmp_arr = array.numpy()
         positions = np.argwhere(tmp_arr[0] > 0).tolist()
-        total_new_conn = np.product(
-            tmp_arr.shape) // 100 if len(positions) else 0
+        total_new_conn = len(positions) // 10 if len(positions) else 0
         positions = random.sample(positions,
-                                  total_new_conn)
+                                  min(len(positions), total_new_conn))
         for pos in positions:
             tmp_arr[:, pos[0], pos[1]] = 0
             tmp_arr[:, pos[1], pos[0]] = 0

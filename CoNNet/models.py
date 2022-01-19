@@ -40,19 +40,18 @@ class BrainNetCNN_single(torch.nn.Module):
         out = self.dropout(F.leaky_relu(self.N2G(out),
                            negative_slope=0.33))
         out = out.view(out.size(0), -1)
-
+        out = self.dropout(F.leaky_relu(self.dense1(out),
+                                        negative_slope=0.33))
         if t is None:
-            out = self.dropout(F.leaky_relu(self.dense1(out),
+            out = self.dropout(F.leaky_relu(self.dense2(out),
                                             negative_slope=0.33))
         else:
             # for tabular data (simplify, then concat)
             # tab = self.tabular_dense1(t)
             # tab = self.relu(tab)
             out = torch.cat((out, t), dim=1)
-            out = self.dropout(F.leaky_relu(self.dense1(out),
+            out = self.dropout(F.leaky_relu(self.dense2(out),
                                             negative_slope=0.33))
-
-        out = F.leaky_relu(self.dense2(out), negative_slope=0.33)
         out = F.leaky_relu(self.dense3(out), negative_slope=0.33)
 
         return out
@@ -86,8 +85,8 @@ class BrainNetCNN_double(torch.nn.Module):
                            negative_slope=0.33)
         out = F.leaky_relu(self.e2econv2(out),
                            negative_slope=0.33)
-        out = F.leaky_relu(self.E2N(out),
-                           negative_slope=0.33)
+        out = self.dropout(F.leaky_relu(self.E2N(out),
+                           negative_slope=0.33))
 
         out = self.dropout(F.leaky_relu(self.N2G(out),
                                         negative_slope=0.33))
