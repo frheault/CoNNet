@@ -33,6 +33,8 @@ def _build_arg_parser():
                    help='')
     p.add_argument('--num_samples', type=int, default=1,
                    help='')
+    p.add_argument('--adaptative_lr', type=int, default=None,
+                   help='Number of Epoch between halving')
 
     p2 = p.add_mutually_exclusive_group()
     p2.add_argument('--include', nargs='+',
@@ -88,12 +90,12 @@ def main():
     #     "wd": tune.choice([0.0005])
     # }
     config = {
-        "l1": tune.choice([64]),
-        "l2": tune.choice([128]),
-        "l3": tune.choice([256]),
-        "lr": tune.choice([0.001]),
-        "batch_size": tune.choice([25]),
-        "wd": tune.choice([0.0005])
+        "l1": tune.grid_search([64]),
+        "l2": tune.grid_search([128]),
+        "l3": tune.grid_search([256]),
+        "lr": tune.grid_search([0.001]),
+        "batch_size": tune.grid_search([50]),
+        "wd": tune.grid_search([0.005])
     }
 
     reporter = CLIReporter(
@@ -105,6 +107,7 @@ def main():
                 in_folder=in_folder,
                 in_labels=in_labels,
                 num_epoch=args.epoch,
+                adaptative_lr=args.adaptative_lr,
                 filenames_to_include=args.include,
                 filenames_to_exclude=args.exclude),
         name=args.exp_name,

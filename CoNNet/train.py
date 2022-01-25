@@ -40,6 +40,7 @@ def seed_worker(worker_id):
 
 
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
+                         adaptative_lr=None,
                          checkpoint_dir=None, filenames_to_include=None,
                          filenames_to_exclude=None):
     set_seed()
@@ -76,8 +77,10 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
     # optimizer = torch.optim.SGD(net.parameters(),
     #                             momentum=momentum,
     #                             lr=lr, weight_decay=wd, nesterov=True)
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
-    scheduler = StepLR(optimizer, step_size=50, gamma=0.5)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd,
+                                 amsgrad=True, eps=1e-6)
+    if adaptative_lr is not None:
+        scheduler = StepLR(optimizer, step_size=adaptative_lr, gamma=0.5)
 
     if checkpoint_dir:
         filename = os.path.join(checkpoint_dir, "checkpoint")
@@ -175,13 +178,14 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
                 preds.append(outputs.detach().numpy())
                 ytrue.append(targets.detach().numpy())
 
-                scheduler.step()
+                if adaptative_lr is not None:
+                    scheduler.step()
 
             loss_train = running_loss/(batch_idx+1)
             acc_score_train = accuracy_score(np.vstack(preds).argmax(axis=1),
                                              np.hstack(ytrue))
             f1_score_train = f1_score(np.vstack(preds).argmax(axis=1),
-                                      np.hstack(ytrue), average='binary')
+                                      np.hstack(ytrue), average='weighted')
             # print('**********************************')
             print('train', epoch, acc_score_train, f1_score_train, loss_train)
             writer.add_scalar('Loss/train', loss_train, epoch)
@@ -217,7 +221,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             acc_score_val = accuracy_score(np.vstack(preds).argmax(axis=1),
                                            np.hstack(ytrue))
             f1_score_val = f1_score(np.vstack(preds).argmax(axis=1),
-                                    np.hstack(ytrue), average='binary')
+                                    np.hstack(ytrue), average='weighted')
             # print('*********/////////')
             # print(np.vstack(preds).argmax(axis=1))
             # print(np.hstack(ytrue))
@@ -325,7 +329,7 @@ def test_classification(result, in_folder, in_labels, filenames_to_include=None,
     acc_score_test = accuracy_score(np.vstack(preds).argmax(axis=1),
                                     np.hstack(ytrue))
     f1_score_test = f1_score(np.vstack(preds).argmax(axis=1),
-                             np.hstack(ytrue), average='binary')
+                             np.hstack(ytrue), average='weighted')
     color_print(np.vstack(preds).argmax(axis=1))
     color_print(np.hstack(ytrue))
     print('Loss/test', loss_test)
