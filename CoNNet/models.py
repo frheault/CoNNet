@@ -20,7 +20,7 @@ class BrainNetCNN_single(torch.nn.Module):
 
         # For matrices
         self.e2econv1 = E2EBlock(self.num_channels, l1, matrix_size,
-                                 bias=True)
+                                 bias=False)
         self.E2N = torch.nn.Conv2d(l1, 1, (1, self.d))
         self.N2G = torch.nn.Conv2d(1, l3, (self.d, 1))
         self.dense1 = torch.nn.Linear(l3, l2)
@@ -67,9 +67,9 @@ class BrainNetCNN_double(torch.nn.Module):
 
         # For matrices
         self.e2econv1 = E2EBlock(self.num_channels, l1, matrix_size,
-                                 bias=True)
+                                 bias=False)
         self.e2econv2 = E2EBlock(l1, l2, matrix_size,
-                                 bias=True)
+                                 bias=False)
         self.E2N = torch.nn.Conv2d(l2, 1, (1, self.d))
         self.N2G = torch.nn.Conv2d(1, l3, (self.d, 1))
         self.dense1 = torch.nn.Linear(l3, l2)

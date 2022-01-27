@@ -51,7 +51,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
                              features_filename_include=filenames_to_include,
-                             features_filename_exclude=filenames_to_exclude)
+                             features_filename_exclude=filenames_to_exclude, how_many=config['how_many'])
 
     # Number of features / matrix size
     nbr_features = len(loaded_stuff[-1])
@@ -129,18 +129,18 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             new_val = np.array(val_idx, dtype=int) + (i * max_len)
             real_val_idx.extend(new_val)
             trainset[new_val[-1]]
-        train_sampler = SubsetRandomSampler(real_train_idx)
-        val_sampler = SubsetRandomSampler(real_val_idx)
+        # train_sampler = SubsetRandomSampler(real_train_idx)
+        # val_sampler = SubsetRandomSampler(real_val_idx)
 
-        print(val_sampler)
-        # rng_cpu = torch.Generator()
-        # rng_cpu.manual_seed(1066)
-        # class_w = balance_sampler(trainset, real_train_idx)
-        # train_sampler = WeightedRandomSampler(real_train_idx, class_w,
-        #                                       generator=rng_cpu)
-        # class_w = balance_sampler(trainset, real_val_idx)
-        # val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
-        #                                     generator=rng_cpu)
+        # print(val_sampler)
+        rng_cpu = torch.Generator()
+        rng_cpu.manual_seed(1066)
+        class_w = balance_sampler(trainset, real_train_idx)
+        train_sampler = WeightedRandomSampler(real_train_idx, class_w,
+                                              generator=rng_cpu)
+        class_w = balance_sampler(trainset, real_val_idx)
+        val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
+                                            generator=rng_cpu)
         # print(real_train_idx)
         # print(real_val_idx)
 

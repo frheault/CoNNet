@@ -22,7 +22,12 @@ def read_matrix(filepath):
         data = np.loadtxt(filepath).astype(np.float64)
     elif ext == '.npy':
         data = np.load(filepath).astype(np.float64)
-    
+
+    # testing
+    # mask = np.load('/home/frheault/Datasets/learning_ml/taylor/CAARE_reorganized/mask.npy')
+    mask = np.load('/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
+    data *= mask
+
     return data / np.percentile(data[data > 0.00001], 50)
     if 'vol' in filepath or 'sc' in filepath or 'commit' in filepath:
         data[data > 0.00001] = np.log10(data[data > 0.00001])
@@ -33,17 +38,20 @@ def read_matrix(filepath):
 def load_data(directory_path, labels_path,
               features_filename_include=None,
               features_filename_exclude=None,
-              as_one_hot=False):
+              as_one_hot=False, how_many=100):
     labels_data = pd.read_excel(labels_path, index_col=0)
     drop_subj = 0
-    for subj in labels_data.index.tolist():
-        if not os.path.isdir(os.path.join(directory_path, subj)):
+    labels_list = labels_data.index.tolist()
+    random.shuffle(labels_list)
+    for i, subj in enumerate(labels_list):
+        if not os.path.isdir(os.path.join(directory_path, subj)) or i > how_many:
             labels_data = labels_data.drop([subj])
             drop_subj += 1
 
     if drop_subj:
         color_print(
-            '{} drop subjects from missing files/folders.'.format(drop_subj))
+            '{} drop subjects from missing files/folders out of {}.'.format(
+                drop_subj, len(labels_list)))
 
     subj_id = labels_data.index.tolist()
     labels = labels_data['labels'].tolist()
@@ -62,7 +70,7 @@ def load_data(directory_path, labels_path,
         nbr_tab = 1
     extra_tabular = np.array(extra_tabular).reshape(
         (len(labels), nbr_tab)).tolist()
-
+    
     # Shuffle the ordering
     tmp = list(zip(subj_id, labels, extra_tabular, pairing))
     random.seed(0)
@@ -142,14 +150,17 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             true_idx = []
             for idx in idx_train:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                # true_idx.extend(tmp)
+                true_idx.extend(tmp)
                 true_idx.append(int(tmp[0]))
         elif self.mode == 'test':
             true_idx = []
             for idx in idx_test:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                # true_idx.extend(tmp)
+                true_idx.extend(tmp)
                 true_idx.append(int(tmp[0]))
+
+        # If session stuff?
+        # true_idx = list(set(true_idx))
 
         x = [subj_list[i] for i in true_idx]
         y = labels[true_idx, ...]
@@ -161,6 +172,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.X = x
         self.Y = torch.FloatTensor(y.astype(np.int64))
         self.T = torch.FloatTensor(t.astype(np.float64))
+
 
     def __len__(self):
         return len(self.X)

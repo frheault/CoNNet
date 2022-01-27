@@ -93,9 +93,10 @@ def main():
         "l1": tune.grid_search([64]),
         "l2": tune.grid_search([128]),
         "l3": tune.grid_search([256]),
-        "lr": tune.grid_search([0.001]),
+        "lr": tune.grid_search([0.0001]),
         "batch_size": tune.grid_search([50]),
-        "wd": tune.grid_search([0.005])
+        "wd": tune.grid_search([0.005]),
+        "how_many": tune.grid_search([50, 100, 200, 400, 800, 1600, 2400])
     }
 
     reporter = CLIReporter(
