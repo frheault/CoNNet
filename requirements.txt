@@ -1,0 +1,11 @@
+scikit-learn
+numpy
+torch
+pandas
+tensorboard
+scipy
+ray[tune]
+coloredlogs
+termcolors
+torchvision
+openpyxl
