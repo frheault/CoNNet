@@ -2,6 +2,7 @@
 
 import os
 import random
+import logging
 
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
@@ -39,9 +40,10 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
+def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                          adaptative_lr=None,
-                         checkpoint_dir=None, filenames_to_include=None,
+                         checkpoint_dir=None, pre_training=None,
+                         filenames_to_include=None,
                          filenames_to_exclude=None):
     set_seed()
     if filenames_to_exclude is None:
@@ -88,6 +90,13 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             model_state, optimizer_state = torch.load(filename)
             net.load_state_dict(model_state)
             optimizer.load_state_dict(optimizer_state)
+    if pre_training:
+        if os.path.isfile(pre_training):
+            model_state, optimizer_state = torch.load(pre_training)
+            net.load_state_dict(model_state)
+            optimizer.load_state_dict(optimizer_state)
+        else:
+            logging.warning('Pre-training file does not exist!')
 
     # Prepare train/val with data augmentation
     transform = transforms.Compose([add_connections(), remove_connections()])
@@ -129,18 +138,18 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=1,
             new_val = np.array(val_idx, dtype=int) + (i * max_len)
             real_val_idx.extend(new_val)
             trainset[new_val[-1]]
-        # train_sampler = SubsetRandomSampler(real_train_idx)
-        # val_sampler = SubsetRandomSampler(real_val_idx)
+        train_sampler = SubsetRandomSampler(real_train_idx)
+        val_sampler = SubsetRandomSampler(real_val_idx)
 
         # print(val_sampler)
-        rng_cpu = torch.Generator()
-        rng_cpu.manual_seed(1066)
-        class_w = balance_sampler(trainset, real_train_idx)
-        train_sampler = WeightedRandomSampler(real_train_idx, class_w,
-                                              generator=rng_cpu)
-        class_w = balance_sampler(trainset, real_val_idx)
-        val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
-                                            generator=rng_cpu)
+        # rng_cpu = torch.Generator()
+        # rng_cpu.manual_seed(1066)
+        # class_w = balance_sampler(trainset, real_train_idx)
+        # train_sampler = WeightedRandomSampler(real_train_idx, class_w,
+        #                                       generator=rng_cpu)
+        # class_w = balance_sampler(trainset, real_val_idx)
+        # val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
+        #                                     generator=rng_cpu)
         # print(real_train_idx)
         # print(real_val_idx)
 
@@ -249,27 +258,21 @@ def test_classification(result, in_folder, in_labels, filenames_to_include=None,
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
                              features_filename_include=filenames_to_include,
-                             features_filename_exclude=filenames_to_exclude)
+                             features_filename_exclude=filenames_to_exclude,
+                             how_many=100000)
     # Handle separately the test set
     transform = transforms.Compose([add_connections(), remove_connections()])
     testset_ori = ConnectomeDataset(loaded_stuff, mode='test',
                                     transform=False)
-    testset_add_rem = ConnectomeDataset(loaded_stuff, mode='test',
-                                        transform=transform)
-    testset_noise = ConnectomeDataset(loaded_stuff, mode='test',
-                                      transform=add_noise())
-    testset_row_col = ConnectomeDataset(loaded_stuff, mode='test',
-                                        transform=remove_row_column())
-    testset = ConcatDataset([testset_ori])  # , testset_add_rem,
-    #  testset_noise, testset_row_col])
+    testset = ConcatDataset([testset_ori])
 
-    rng_cpu = torch.Generator()
-    rng_cpu.manual_seed(2277)
+    # rng_cpu = torch.Generator()
+    # rng_cpu.manual_seed(2277)
     test_idx = list(range(len(testset)))
-    class_w = balance_sampler(testset, test_idx)
-    test_sampler = WeightedRandomSampler(test_idx, class_w,
-                                         generator=rng_cpu)
-    # test_sampler = SubsetRandomSampler(test_idx)
+    # class_w = balance_sampler(testset, test_idx)
+    # test_sampler = WeightedRandomSampler(test_idx, class_w,
+    #                                      generator=rng_cpu)
+    test_sampler = SubsetRandomSampler(test_idx)
     set_seed()
     testloader = DataLoader(testset, batch_size=50,
                             num_workers=1, sampler=test_sampler,
@@ -330,8 +333,8 @@ def test_classification(result, in_folder, in_labels, filenames_to_include=None,
                                     np.hstack(ytrue))
     f1_score_test = f1_score(np.vstack(preds).argmax(axis=1),
                              np.hstack(ytrue), average='weighted')
-    color_print(np.vstack(preds).argmax(axis=1))
-    color_print(np.hstack(ytrue))
+    # color_print(np.vstack(preds).argmax(axis=1))
+    # color_print(np.hstack(ytrue))
     print('Loss/test', loss_test)
     print('Accuracy/test', acc_score_test)
     print('F1/test', f1_score_test)
