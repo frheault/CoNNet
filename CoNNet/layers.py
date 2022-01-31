@@ -1,13 +1,6 @@
 #!/usr/bin/env python
 
 import torch
-import numpy as np
-
-import torch.nn.functional as F
-import torch.nn
-from torch.autograd import Variable
-
-import torch.backends.cudnn as cudnn
 
 
 use_cuda = torch.cuda.is_available()
@@ -16,7 +9,7 @@ use_cuda = torch.cuda.is_available()
 class E2EBlock(torch.nn.Module):
     '''E2Eblock.'''
 
-    def __init__(self, in_planes, planes, matrix_size, bias=False):
+    def __init__(self, in_planes, planes, matrix_size, bias=True):
         super(E2EBlock, self).__init__()
         self.d = matrix_size
         self.cnn1 = torch.nn.Conv2d(in_planes, planes, (1, self.d),
