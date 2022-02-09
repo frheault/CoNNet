@@ -28,13 +28,7 @@ def read_matrix(filepath):
     # mask = np.load('/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
     # data *= mask
 
-    # return data / np.max(data)
-
     return data / np.percentile(data[data > 0.00001], 50)
-    if 'vol' in filepath or 'sc' in filepath or 'commit' in filepath:
-        data[data > 0.00001] = np.log10(data[data > 0.00001])
-
-    return data / np.max(data)
 
 
 def load_data(directory_path, labels_path,
@@ -152,17 +146,17 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             true_idx = []
             for idx in idx_train:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                # true_idx.extend(tmp)
-                true_idx.append(int(tmp[0]))
+                true_idx.extend(tmp)
+                # true_idx.append(int(tmp[0]))
         elif self.mode == 'test':
             true_idx = []
             for idx in idx_test:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                # true_idx.extend(tmp)
-                true_idx.append(int(tmp[0]))
+                true_idx.extend(tmp)
+                # true_idx.append(int(tmp[0]))
 
         # If session stuff?
-        true_idx = list(set(true_idx))
+        # true_idx = list(set(true_idx))
 
         x = [subj_list[i] for i in true_idx]
         y = labels[true_idx, ...]

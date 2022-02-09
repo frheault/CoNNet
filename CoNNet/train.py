@@ -3,6 +3,7 @@
 import os
 import random
 import logging
+from collections import OrderedDict
 
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
@@ -41,7 +42,7 @@ def seed_worker(worker_id):
 
 
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
-                         adaptative_lr=None,
+                         adaptive_lr=None, balance_class=False,
                          checkpoint_dir=None, pre_training=None,
                          filenames_to_include=None,
                          filenames_to_exclude=None):
@@ -53,7 +54,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
                              features_filename_include=filenames_to_include,
-                             features_filename_exclude=filenames_to_exclude, how_many=config['how_many'])
+                             features_filename_exclude=filenames_to_exclude,
+                             how_many=config['how_many'])
 
     # Number of features / matrix size
     nbr_features = len(loaded_stuff[-1])
@@ -62,41 +64,47 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
         np.isnan(loaded_stuff[2])) else 0
 
-    net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
-                             l1=config['l1'], l2=config['l2'], l3=config['l3'])
+    if pre_training:
+        if os.path.isfile(pre_training):
+            net = torch.load(pre_training)
+            logging.info('Using pre-training! Freezing layers')
+            net.E2Econv1.cnn1.weight.requires_grad = False
+            net.E2Econv1.cnn2.weight.requires_grad = False
+            net.E2Econv2.cnn1.weight.requires_grad = False
+            net.E2Econv2.cnn2.weight.requires_grad = False
+            # net.E2N.weight.requires_grad = False
+            # net.N2G.weight.requires_grad = False
+        else:
+            logging.warning('Pre-training file does not exist!\n'
+                            'Pre-training NOT activated.')
+    else:
+        net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
+                                 l1=config['l1'], l2=config['l2'], l3=config['l3'])
 
     if use_cuda:
         net = net.cuda(0)
-        net = torch.nn.DataParallel(net, device_ids=[0])
+        #net = torch.nn.DataParallel(net, device_ids=[0])
 
     momentum = 0.9
     lr = config['lr']
     wd = config['wd']
 
-    # criterion = torch.nn.NLLLoss()
     criterion = torch.nn.CrossEntropyLoss()
-    # Adam
     # optimizer = torch.optim.SGD(net.parameters(),
     #                             momentum=momentum,
     #                             lr=lr, weight_decay=wd, nesterov=True)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd,
                                  amsgrad=True, eps=1e-6)
-    if adaptative_lr is not None:
-        scheduler = StepLR(optimizer, step_size=adaptative_lr, gamma=0.5)
+    if adaptive_lr is not None:
+        scheduler = StepLR(optimizer, step_size=adaptive_lr, gamma=0.5)
 
     if checkpoint_dir:
         filename = os.path.join(checkpoint_dir, "checkpoint")
         if os.path.isfile(filename):
+            print(filename)
             model_state, optimizer_state = torch.load(filename)
             net.load_state_dict(model_state)
             optimizer.load_state_dict(optimizer_state)
-    if pre_training:
-        if os.path.isfile(pre_training):
-            model_state, optimizer_state = torch.load(pre_training)
-            net.load_state_dict(model_state)
-            optimizer.load_state_dict(optimizer_state)
-        else:
-            logging.warning('Pre-training file does not exist!')
 
     # Prepare train/val with data augmentation
     transform = transforms.Compose([add_connections(), remove_connections()])
@@ -130,8 +138,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
         real_train_idx = []
         real_val_idx = []
-        # print(train_idx)
-        # print(val_idx)
         for i in range(4):
             new_train = np.array(train_idx, dtype=int) + (i * max_len)
             real_train_idx.extend(new_train)
@@ -141,17 +147,18 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
         train_sampler = SubsetRandomSampler(real_train_idx)
         val_sampler = SubsetRandomSampler(real_val_idx)
 
-        # print(val_sampler)
-        # rng_cpu = torch.Generator()
-        # rng_cpu.manual_seed(1066)
-        # class_w = balance_sampler(trainset, real_train_idx)
-        # train_sampler = WeightedRandomSampler(real_train_idx, class_w,
-        #                                       generator=rng_cpu)
-        # class_w = balance_sampler(trainset, real_val_idx)
-        # val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
-        #                                     generator=rng_cpu)
-        # print(real_train_idx)
-        # print(real_val_idx)
+        if balance_class:
+            rng_cpu = torch.Generator()
+            rng_cpu.manual_seed(1066)
+            class_w = balance_sampler(trainset, real_train_idx)
+            train_sampler = WeightedRandomSampler(real_train_idx, class_w,
+                                                  generator=rng_cpu)
+            class_w = balance_sampler(trainset, real_val_idx)
+            val_sampler = WeightedRandomSampler(real_val_idx, weights=class_w,
+                                                generator=rng_cpu)
+        else:
+            train_sampler = SubsetRandomSampler(real_train_idx)
+            val_sampler = SubsetRandomSampler(real_val_idx)
 
         set_seed()
         trainloader = DataLoader(trainset, batch_size=int(config['batch_size']),
@@ -187,7 +194,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                 preds.append(outputs.detach().numpy())
                 ytrue.append(targets.detach().numpy())
 
-                if adaptative_lr is not None:
+                if adaptive_lr is not None:
                     scheduler.step()
 
             loss_train = running_loss/(batch_idx+1)
@@ -195,8 +202,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                              np.hstack(ytrue))
             f1_score_train = f1_score(np.vstack(preds).argmax(axis=1),
                                       np.hstack(ytrue), average='weighted')
-            # print('**********************************')
-            print('train', epoch, acc_score_train, f1_score_train, loss_train)
+            color_print('Training, epoch: {}, accuracy: {}, f1_score: {}, '
+                        'loss: {}'.format(epoch, acc_score_train,
+                                          f1_score_train, loss_train))
             writer.add_scalar('Loss/train', loss_train, epoch)
             writer.add_scalar('Accuracy/train', acc_score_train, epoch)
             writer.add_scalar('F1/train', f1_score_train, epoch)
@@ -231,13 +239,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                            np.hstack(ytrue))
             f1_score_val = f1_score(np.vstack(preds).argmax(axis=1),
                                     np.hstack(ytrue), average='weighted')
-            # print('*********/////////')
-            # print(np.vstack(preds).argmax(axis=1))
-            # print(np.hstack(ytrue))
-
             print()
 
-            # print('val',epoch,acc_score_val)
             writer.add_scalar('Loss/val', loss_val, epoch)
             writer.add_scalar('Accuracy/val', acc_score_val, epoch)
             writer.add_scalar('F1/val', f1_score_val, epoch)
@@ -250,8 +253,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         f1_score=f1_score_val)
 
 
-def test_classification(result, in_folder, in_labels, filenames_to_include=None,
-                        filenames_to_exclude=None):
+def test_classification(input_results, in_folder, in_labels, balance_class=False,
+                        filenames_to_include=None, filenames_to_exclude=None,
+                        save_best_model=None):
     if filenames_to_exclude is None:
         filenames_to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
                                 'sc_vol_normalized.npy']
@@ -260,56 +264,68 @@ def test_classification(result, in_folder, in_labels, filenames_to_include=None,
                              features_filename_include=filenames_to_include,
                              features_filename_exclude=filenames_to_exclude,
                              how_many=100000)
+
     # Handle separately the test set
-    transform = transforms.Compose([add_connections(), remove_connections()])
     testset_ori = ConnectomeDataset(loaded_stuff, mode='test',
                                     transform=False)
     testset = ConcatDataset([testset_ori])
 
-    # rng_cpu = torch.Generator()
-    # rng_cpu.manual_seed(2277)
+    rng_cpu = torch.Generator()
+    rng_cpu.manual_seed(2277)
     test_idx = list(range(len(testset)))
-    # class_w = balance_sampler(testset, test_idx)
-    # test_sampler = WeightedRandomSampler(test_idx, class_w,
-    #                                      generator=rng_cpu)
-    test_sampler = SubsetRandomSampler(test_idx)
+    if balance_class:
+        class_w = balance_sampler(testset, test_idx)
+        test_sampler = WeightedRandomSampler(test_idx, class_w,
+                                             generator=rng_cpu)
+    else:
+        test_sampler = SubsetRandomSampler(test_idx)
+
     set_seed()
     testloader = DataLoader(testset, batch_size=50,
                             num_workers=1, sampler=test_sampler,
                             worker_init_fn=seed_worker)
 
-    best_trial = result.get_best_trial("loss", "min", "last")
-    # Number of features / matrix size
-    nbr_features = len(loaded_stuff[-1])
-    matrix_size = loaded_stuff[-2]
-    nbr_class = len(np.unique(loaded_stuff[1]))
     nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
         np.isnan(loaded_stuff[2])) else 0
-    net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
-                             l1=best_trial.config['l1'],
-                             l2=best_trial.config['l2'],
-                             l3=best_trial.config['l3'])
-    criterion = torch.nn.CrossEntropyLoss()
-    # optimizer = torch.optim.SGD(net.parameters(), lr=best_trial.config['lr'])
 
-    if use_cuda:
-        net = net.cuda(0)
-        net = torch.nn.DataParallel(net, device_ids=[0])
+    if isinstance(input_results, str):
+        net = torch.load(input_results)
+        if use_cuda:
+            net = net.cuda(0)
+            #net = torch.nn.DataParallel(net, device_ids=[0])
+    else:
+        best_trial = input_results.get_best_trial("loss", "min", "last")
+        # Number of features / matrix size
+        nbr_features = len(loaded_stuff[-1])
+        matrix_size = loaded_stuff[-2]
+        nbr_class = len(np.unique(loaded_stuff[1]))
+        net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
+                                 l1=best_trial.config['l1'],
+                                 l2=best_trial.config['l2'],
+                                 l3=best_trial.config['l3'])
+
+        if use_cuda:
+            net = net.cuda(0)
+            #net = torch.nn.DataParallel(net, device_ids=[0])
+
+        best_checkpoint_dir = best_trial.checkpoint.value
+        model_state, _ = torch.load(os.path.join(best_checkpoint_dir,
+                                                 "checkpoint"))
+        new_state_dict = OrderedDict()
+        for k, v in model_state.items():
+            new_state_dict[k.replace('module.module.', 'module.')] = v
+        net.load_state_dict(new_state_dict)
+
         # cudnn.benchmark = True
 
-    best_checkpoint_dir = best_trial.checkpoint.value
-    # print('best_checkpoint_dir', best_checkpoint_dir)
-    model_state, _ = torch.load(os.path.join(
-        best_checkpoint_dir, "checkpoint"))
-    net.load_state_dict(model_state)
-    # optimizer.load_state_dict(optimizer_state)
+    if save_best_model is not None:
+        torch.save(net, save_best_model)
 
+    criterion = torch.nn.CrossEntropyLoss()
     test_loss = 0
     running_loss = 0.0
-
     preds = []
     ytrue = []
-
     for batch_idx, (inputs, tabs, targets) in enumerate(testloader):
         if use_cuda:
             inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
@@ -333,9 +349,10 @@ def test_classification(result, in_folder, in_labels, filenames_to_include=None,
                                     np.hstack(ytrue))
     f1_score_test = f1_score(np.vstack(preds).argmax(axis=1),
                              np.hstack(ytrue), average='weighted')
-    # color_print(np.vstack(preds).argmax(axis=1))
-    # color_print(np.hstack(ytrue))
+
     print('Loss/test', loss_test)
     print('Accuracy/test', acc_score_test)
     print('F1/test', f1_score_test)
-    print(best_trial.config)
+
+    if not isinstance(input_results, str):
+        print(best_trial.config)
