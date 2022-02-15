@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from scipy.stats import pearsonr
+from sklearn.metrics import mean_absolute_error as mae
 import os
 import random
 import logging
@@ -7,6 +9,8 @@ from collections import OrderedDict
 
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import mean_absolute_error as mae
+from scipy.stats import pearsonr
 from sklearn.model_selection import KFold
 import torch
 from torch.utils.data import (ConcatDataset,
@@ -20,7 +24,7 @@ from CoNNet.utils import (color_print, load_data, ConnectomeDataset,
                           add_noise, add_connections, remove_connections,
                           remove_row_column, balance_sampler)
 from CoNNet.sampler import WeightedRandomSampler
-from CoNNet.models import BrainNetCNN_double
+from CoNNet.models import BrainNetCNN_double, BrainNetCNN_double_extra
 from torch.optim.lr_scheduler import StepLR
 
 use_cuda = torch.cuda.is_available()
@@ -41,8 +45,56 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
+def customize_loss(nbr_classification, nbr_classes_each, nbr_regression,
+                   outputs, targets_c, targets_r):
+    criterion_CE = torch.nn.CrossEntropyLoss()
+    criterion_MSE = torch.nn.MSELoss()
+
+    loss = 0.0
+    skip = 0
+    for i in range(nbr_classification):
+        loss += criterion_CE(outputs[:, skip:skip +
+                             nbr_classes_each[i]], targets_c[:, i])
+        skip += nbr_classes_each[i]
+
+    for i in range(nbr_regression):
+        loss += criterion_MSE(outputs[:, skip+i], targets_r[:, i])
+    return loss
+
+
+def compute_scores(nbr_classification, nbr_classes_each,
+                   nbr_regression, preds, ytrue_c, ytrue_r):
+    preds = np.concatenate(preds)
+    ytrue_c = np.concatenate(ytrue_c)
+    ytrue_r = np.concatenate(ytrue_r)
+
+    maer, corr = 0.0, 0.0
+    acc, f1 = 0.0, 0.0
+
+    skip = 0
+    for i in range(nbr_classification):
+        acc += accuracy_score(preds[:, skip:skip +
+                                    nbr_classes_each[i]].argmax(axis=1),
+                              np.hstack(ytrue_c[:, i]))
+        f1 += f1_score(preds[:, skip:skip +
+                             nbr_classes_each[i]].argmax(axis=1),
+                       np.hstack(ytrue_c[:, i]), average='weighted')
+        skip += nbr_classes_each[i]
+
+    for i in range(nbr_regression):
+        maer += mae(preds[:, skip+i], ytrue_r[:, i])
+        corr += pearsonr(preds[:, skip+i], ytrue_r[:, i])[0]
+
+    acc = acc/nbr_classification if nbr_classification > 0 else acc
+    f1 = f1/nbr_classification if nbr_classification > 0 else f1
+    maer = maer/nbr_regression if nbr_regression > 0 else maer
+    corr = corr/nbr_regression if nbr_regression > 0 else corr
+
+    return acc, f1, maer, corr
+
+
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
-                         adaptive_lr=None, balance_class=False,
+                         nb_fold=False, adaptive_lr=None, balance_class=False,
                          checkpoint_dir=None, pre_training=None,
                          filenames_to_include=None,
                          filenames_to_exclude=None):
@@ -60,36 +112,58 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     # Number of features / matrix size
     nbr_features = len(loaded_stuff[-1])
     matrix_size = loaded_stuff[-2]
-    nbr_class = len(np.unique(loaded_stuff[1]))
-    nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
+    nbr_classification = loaded_stuff[2].shape[-1] if not np.any(
         np.isnan(loaded_stuff[2])) else 0
+    nbr_classes_each = [len(np.unique(loaded_stuff[2][:, i]))
+                        for i in range(nbr_classification)]
+    nbr_regression = len(loaded_stuff[3][0]) if not np.any(
+        np.isnan(loaded_stuff[3])) else 0
+    nbr_tabular = len(loaded_stuff[4][0]) if not np.any(
+        np.isnan(loaded_stuff[4])) else 0
 
     if pre_training:
         if os.path.isfile(pre_training):
-            net = torch.load(pre_training)
-            logging.info('Using pre-training! Freezing layers')
+            net_pre = torch.load(pre_training)
+            net = BrainNetCNN_double_extra(nbr_features, matrix_size,
+                                           nbr_classification, nbr_classes_each,
+                                           nbr_regression, nbr_tabular,
+                                           l1=config['l1'], l2=config['l2'],
+                                           l3=config['l3'])
+
+            logging.info('Using pre-training! Transfering weigths')
+            net.E2Econv1.cnn1.weight = net_pre.E2Econv1.cnn1.weight
+            net.E2Econv1.cnn2.weight = net_pre.E2Econv1.cnn2.weight
+            net.E2Econv2.cnn1.weight = net_pre.E2Econv2.cnn1.weight
+            net.E2Econv2.cnn2.weight = net_pre.E2Econv2.cnn2.weight
+            net.E2N.weight = net_pre.E2N.weight
+            net.N2G.weight = net_pre.N2G.weight
+            net.dense1.weight = net_pre.dense1.weight
+
+            logging.info('Using pre-training! Freezing layers.')
             net.E2Econv1.cnn1.weight.requires_grad = False
             net.E2Econv1.cnn2.weight.requires_grad = False
             net.E2Econv2.cnn1.weight.requires_grad = False
             net.E2Econv2.cnn2.weight.requires_grad = False
-            # net.E2N.weight.requires_grad = False
-            # net.N2G.weight.requires_grad = False
+            net.E2N.weight.requires_grad = False
+            net.N2G.weight.requires_grad = False
         else:
             logging.warning('Pre-training file does not exist!\n'
                             'Pre-training NOT activated.')
     else:
-        net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
-                                 l1=config['l1'], l2=config['l2'], l3=config['l3'])
+        net = BrainNetCNN_double_extra(nbr_features, matrix_size,
+                                       nbr_classification, nbr_classes_each,
+                                       nbr_regression, nbr_tabular,
+                                       l1=config['l1'], l2=config['l2'],
+                                       l3=config['l3'])
 
     if use_cuda:
         net = net.cuda(0)
-        #net = torch.nn.DataParallel(net, device_ids=[0])
+        # net = torch.nn.DataParallel(net, device_ids=[0])
 
     momentum = 0.9
     lr = config['lr']
     wd = config['wd']
 
-    criterion = torch.nn.CrossEntropyLoss()
     # optimizer = torch.optim.SGD(net.parameters(),
     #                             momentum=momentum,
     #                             lr=lr, weight_decay=wd, nesterov=True)
@@ -117,13 +191,13 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     trainset_row_col = ConnectomeDataset(loaded_stuff, mode='train',
                                          transform=remove_row_column())
     trainset = ConcatDataset([trainset_ori, trainset_add_rem,
-                             trainset_noise, trainset_row_col])
+                              trainset_noise, trainset_row_col])
 
     # Split training set in two (train/validation)
     max_len = len(trainset) // 4
     all_idx = np.arange(max_len)
     random.shuffle(all_idx)
-    nb_fold = False
+
     if nb_fold:
         kf_split = KFold(n_splits=nb_fold, shuffle=False, random_state=None)
         split_method = kf_split.split(all_idx)
@@ -173,84 +247,96 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             net.train()
             running_loss = 0.0
             preds = []
-            ytrue = []
-            for batch_idx, (inputs, tabs, targets) in enumerate(trainloader):
+            ytrue_c = []
+            ytrue_r = []
+            for batch_idx, (inputs, tabs, targets_c, targets_r) in enumerate(trainloader):
                 if use_cuda:
-                    inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
+                    inputs, tabs, targets_c, targets_r = inputs.cuda(), tabs.cuda(), \
+                        targets_c.cuda().long(), targets_r.cuda()
                 optimizer.zero_grad()
 
                 tabs = None if nbr_tabular == 0 else tabs
                 outputs = net(inputs, tabs)
 
-                loss = criterion(outputs, targets)
+                loss = customize_loss(nbr_classification, nbr_classes_each,
+                                      nbr_regression, outputs,
+                                      targets_c, targets_r)
                 loss.backward()
                 optimizer.step()
 
                 # print statistics
                 running_loss += loss.data.item()
                 if use_cuda:
-                    outputs, targets = outputs.cpu(), targets.cpu()
+                    outputs, targets_c, targets_r = outputs.cpu(), \
+                        targets_c.cpu(), targets_r.cpu()
 
                 preds.append(outputs.detach().numpy())
-                ytrue.append(targets.detach().numpy())
+                ytrue_c.append(targets_c.detach().numpy())
+                ytrue_r.append(targets_r.detach().numpy())
 
                 if adaptive_lr is not None:
                     scheduler.step()
 
             loss_train = running_loss/(batch_idx+1)
-            acc_score_train = accuracy_score(np.vstack(preds).argmax(axis=1),
-                                             np.hstack(ytrue))
-            f1_score_train = f1_score(np.vstack(preds).argmax(axis=1),
-                                      np.hstack(ytrue), average='weighted')
-            color_print('Training, epoch: {}, accuracy: {}, f1_score: {}, '
-                        'loss: {}'.format(epoch, acc_score_train,
-                                          f1_score_train, loss_train))
+            acc, f1, maer, corr = compute_scores(nbr_classification,
+                                                 nbr_classes_each,
+                                                 nbr_regression,
+                                                 preds, ytrue_c, ytrue_r)
+
             writer.add_scalar('Loss/train', loss_train, epoch)
-            writer.add_scalar('Accuracy/train', acc_score_train, epoch)
-            writer.add_scalar('F1/train', f1_score_train, epoch)
+            writer.add_scalar('Accuracy/train', acc, epoch)
+            writer.add_scalar('F1/train', f1, epoch)
+            writer.add_scalar('MAE/train', maer, epoch)
+            writer.add_scalar('CORR/train', corr, epoch)
+            color_print('loss:{}, acc:{}, f1:{}, mae:{}, corr:{}'.format(
+                loss_train, acc, f1, maer, corr))
 
             # VALIDATION
             net.eval()
-            test_loss = 0
             running_loss = 0.0
             preds = []
-            ytrue = []
-            for batch_idx, (inputs, tabs, targets) in enumerate(valloader):
+            ytrue_c = []
+            ytrue_r = []
+            for batch_idx, (inputs, tabs, targets_c, targets_r) in enumerate(valloader):
                 if use_cuda:
-                    inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
+                    inputs, tabs, targets_c, targets_r = inputs.cuda(), tabs.cuda(), \
+                        targets_c.cuda().long(), targets_r.cuda()
                 with torch.no_grad():
                     tabs = None if nbr_tabular == 0 else tabs
                     outputs = net(inputs, tabs)
-                    loss = criterion(outputs, targets)
-
-                    test_loss += loss.data.item()
+                    loss = customize_loss(nbr_classification, nbr_classes_each,
+                                          nbr_regression, outputs,
+                                          targets_c, targets_r)
 
                     if use_cuda:
-                        outputs, targets = outputs.cpu(), targets.cpu()
+                        outputs, targets_c, targets_r = outputs.cpu(), \
+                            targets_c.cpu(), targets_r.cpu()
 
                     preds.append(outputs.detach().numpy())
-                    ytrue.append(targets.detach().numpy())
+                    ytrue_c.append(targets_c.detach().numpy())
+                    ytrue_r.append(targets_r.detach().numpy())
 
                 running_loss += loss.data.item()
 
             # print('val',running_loss, batch_idx)
             loss_val = running_loss/(batch_idx+1)
-            acc_score_val = accuracy_score(np.vstack(preds).argmax(axis=1),
-                                           np.hstack(ytrue))
-            f1_score_val = f1_score(np.vstack(preds).argmax(axis=1),
-                                    np.hstack(ytrue), average='weighted')
-            print()
+            acc, f1, maer, corr = compute_scores(nbr_classification,
+                                                 nbr_classes_each,
+                                                 nbr_regression,
+                                                 preds, ytrue_c, ytrue_r)
 
             writer.add_scalar('Loss/val', loss_val, epoch)
-            writer.add_scalar('Accuracy/val', acc_score_val, epoch)
-            writer.add_scalar('F1/val', f1_score_val, epoch)
+            writer.add_scalar('Accuracy/val', acc, epoch)
+            writer.add_scalar('F1/val', f1, epoch)
+            writer.add_scalar('MAE/val', maer, epoch)
+            writer.add_scalar('CORR/val', corr, epoch)
 
             with tune.checkpoint_dir(epoch) as checkpoint_dir:
                 path = os.path.join(checkpoint_dir, "checkpoint")
                 torch.save((net.state_dict(), optimizer.state_dict()), path)
 
-            tune.report(loss=loss_val, accuracy=acc_score_val,
-                        f1_score=f1_score_val)
+            tune.report(loss=loss_val, mae=maer, corr=corr, accuracy=acc,
+                        f1_score=f1)
 
 
 def test_classification(input_results, in_folder, in_labels, balance_class=False,
@@ -285,74 +371,90 @@ def test_classification(input_results, in_folder, in_labels, balance_class=False
                             num_workers=1, sampler=test_sampler,
                             worker_init_fn=seed_worker)
 
-    nbr_tabular = len(loaded_stuff[2][0]) if not np.any(
-        np.isnan(loaded_stuff[2])) else 0
+    nbr_tabular = testset_ori.nbr_tabular
 
     if isinstance(input_results, str):
         net = torch.load(input_results)
         if use_cuda:
             net = net.cuda(0)
-            #net = torch.nn.DataParallel(net, device_ids=[0])
+            # net = torch.nn.DataParallel(net, device_ids=[0])
     else:
         best_trial = input_results.get_best_trial("loss", "min", "last")
         # Number of features / matrix size
         nbr_features = len(loaded_stuff[-1])
         matrix_size = loaded_stuff[-2]
-        nbr_class = len(np.unique(loaded_stuff[1]))
-        net = BrainNetCNN_double(nbr_features, matrix_size, nbr_class, nbr_tabular,
-                                 l1=best_trial.config['l1'],
-                                 l2=best_trial.config['l2'],
-                                 l3=best_trial.config['l3'])
+        nbr_classification = loaded_stuff[2].shape[-1] if not np.any(
+            np.isnan(loaded_stuff[2])) else 0
+        nbr_classes_each = [len(np.unique(loaded_stuff[2][:, i]))
+                            for i in range(nbr_classification)]
+        nbr_regression = len(loaded_stuff[3][0]) if not np.any(
+            np.isnan(loaded_stuff[3])) else 0
+        nbr_tabular = len(loaded_stuff[4][0]) if not np.any(
+            np.isnan(loaded_stuff[4])) else 0
+
+        net = BrainNetCNN_double_extra(nbr_features, matrix_size,
+                                       nbr_classification, nbr_classes_each,
+                                       nbr_regression, nbr_tabular,
+                                       l1=best_trial.config['l1'],
+                                       l2=best_trial.config['l2'],
+                                       l3=best_trial.config['l3'])
 
         if use_cuda:
             net = net.cuda(0)
-            #net = torch.nn.DataParallel(net, device_ids=[0])
+            # net = torch.nn.DataParallel(net, device_ids=[0])
 
         best_checkpoint_dir = best_trial.checkpoint.value
         model_state, _ = torch.load(os.path.join(best_checkpoint_dir,
                                                  "checkpoint"))
-        new_state_dict = OrderedDict()
-        for k, v in model_state.items():
-            new_state_dict[k.replace('module.module.', 'module.')] = v
-        net.load_state_dict(new_state_dict)
+        # new_state_dict = OrderedDict()
+        # for k, v in model_state.items():
+        #     new_state_dict[k.replace('module.module.', 'module.')] = v
+        net.load_state_dict(model_state)
 
         # cudnn.benchmark = True
 
     if save_best_model is not None:
         torch.save(net, save_best_model)
 
-    criterion = torch.nn.CrossEntropyLoss()
-    test_loss = 0
+    # test_loss = 0
     running_loss = 0.0
     preds = []
-    ytrue = []
-    for batch_idx, (inputs, tabs, targets) in enumerate(testloader):
+    ytrue_c = []
+    ytrue_r = []
+    for batch_idx, (inputs, tabs, targets_c, targets_r) in enumerate(testloader):
         if use_cuda:
-            inputs, tabs, targets = inputs.cuda(), tabs.cuda(), targets.cuda().long()
+            inputs, tabs, targets_c, targets_r = inputs.cuda(), tabs.cuda(), \
+                targets_c.cuda().long(), targets_r.cuda()
+
         with torch.no_grad():
             tabs = None if nbr_tabular == 0 else tabs
             outputs = net(inputs, tabs)
-            loss = criterion(outputs, targets)
+            loss = customize_loss(nbr_classification, nbr_classes_each,
+                                  nbr_regression, outputs,
+                                  targets_c, targets_r)
 
-            test_loss += loss.data.item()
+            running_loss += loss.data.item()
 
             if use_cuda:
-                outputs, targets = outputs.cpu(), targets.cpu()
+                outputs, targets_c, targets_r = outputs.cpu(), targets_c.cpu(), \
+                    targets_r.cpu()
 
             preds.append(outputs.detach().numpy())
-            ytrue.append(targets.detach().numpy())
+            ytrue_c.append(targets_c.detach().numpy())
+            ytrue_r.append(targets_r.detach().numpy())
 
-        running_loss += loss.data.item()
+        # running_loss += loss.data.item()
 
-    loss_test = running_loss/(batch_idx+1)
-    acc_score_test = accuracy_score(np.vstack(preds).argmax(axis=1),
-                                    np.hstack(ytrue))
-    f1_score_test = f1_score(np.vstack(preds).argmax(axis=1),
-                             np.hstack(ytrue), average='weighted')
+    # loss_test += loss.data.item()
 
-    print('Loss/test', loss_test)
-    print('Accuracy/test', acc_score_test)
-    print('F1/test', f1_score_test)
+    test_loss = running_loss/(batch_idx+1)
+    acc, f1, maer, corr = compute_scores(nbr_classification,
+                                         nbr_classes_each,
+                                         nbr_regression,
+                                         preds, ytrue_c, ytrue_r)
+
+    color_print('TESTSET - loss:{}, acc:{}, f1:{}, mae:{}, corr:{}'.format(
+        test_loss, acc, f1, maer, corr))
 
     if not isinstance(input_results, str):
         print(best_trial.config)

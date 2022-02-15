@@ -42,8 +42,7 @@ def _build_arg_parser():
                     help='Skip training and only apply the network to test set.\n'
                          'User must provide a model file.')
     e1.add_argument('--save_best_model',
-                   help='Save output model file (to reload or use as pre-training).')
-
+                    help='Save output model file (to reload or use as pre-training).')
     e2 = e.add_mutually_exclusive_group()
     e2.add_argument('--resume', action='store_true',
                     help='Resume experiment with --exp_name, checkpoints must '
@@ -54,15 +53,17 @@ def _build_arg_parser():
     t = p.add_argument_group('Training options')
     t.add_argument('--epoch', type=int, default=100,
                    help='Number of epoch for training.')
+    t.add_argument('--k_fold', type=int, default=0,
+                   help='Number of fold for training [%(default)s].')
     t.add_argument('--adaptive_lr', type=int, default=None,
                    help='Number of Epoch between halving')
     t.add_argument('--learning_rate', nargs='+', default=[0.0001], type=float,
-                   help='List of learning rate  to try[%(default)s].')
+                   help='List of learning rate  to try [%(default)s].')
     t.add_argument('--weight_decay', nargs='+', default=[0.005], type=float,
-                   help='List of learning rate  to try[%(default)s].')
+                   help='List of learning rate  to try [%(default)s].')
     t.add_argument('--batch_size', nargs='+', default=[50], type=int,
                    help='List of batch size to try [%(default)s].')
-    t.add_argument('--limit_sample_size', nargs='+', default=None,
+    t.add_argument('--limit_sample_size', nargs='+', default=None, type=int,
                    help='List of sample size size to try [%(default)s].')
     t2 = t.add_mutually_exclusive_group()
     t2.add_argument('--include', nargs='+',
@@ -73,13 +74,12 @@ def _build_arg_parser():
                          'models. Include all but.')
 
     m = p.add_argument_group('Model options')
-    m.add_argument('--layer_1_size', nargs='+', default=[64],
+    m.add_argument('--layer_1_size', nargs='+', default=[64], type=int,
                    help='List of layer (1) size to try [%(default)s].')
-    m.add_argument('--layer_2_size', nargs='+', default=[128],
+    m.add_argument('--layer_2_size', nargs='+', default=[128], type=int,
                    help='List of layer (2) size to try [%(default)s].')
-    m.add_argument('--layer_3_size', nargs='+', default=[256],
+    m.add_argument('--layer_3_size', nargs='+', default=[256], type=int,
                    help='List of layer (3) size to try [%(default)s].')
-
     return p
 
 
@@ -133,16 +133,20 @@ def main():
             "how_many": tune.grid_search(args.limit_sample_size)
         }
 
+
         reporter = CLIReporter(
-            parameter_columns=["l1", "l2", 'l3', "lr", "wd", "batch_size"],
-            metric_columns=["loss", "accuracy", "f1_score", "training_iteration"])
+            parameter_columns=["l1", "l2", 'l3', "lr"],
+            metric_columns=["loss", "accuracy", "f1_score", "mae", "corr",
+                            "training_iteration"])
         # stopper = TrialPlateauStopper('loss', std=0.01, num_results=5,
-                                    #   grace_period=20)
+            #   grace_period=20)
+        print(args)
         result = tune.run(
             partial(train_classification,
                     in_folder=in_folder,
                     in_labels=in_labels,
                     num_epoch=args.epoch,
+                    nb_fold=args.k_fold,
                     adaptive_lr=args.adaptive_lr,
                     filenames_to_include=args.include,
                     filenames_to_exclude=args.exclude,
@@ -153,6 +157,8 @@ def main():
             num_samples=1,
             verbose=verbose,
             progress_reporter=reporter,
+            checkpoint_score_attr="min-loss",
+            keep_checkpoints_num=10,
             # stop=stopper,
             resume=args.resume,
             local_dir=args.out_folder)

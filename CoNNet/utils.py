@@ -25,8 +25,8 @@ def read_matrix(filepath):
 
     # testing
     # mask = np.load('/home/frheault/Datasets/learning_ml/taylor/CAARE_reorganized/mask.npy')
-    # mask = np.load('/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
-    # data *= mask
+    mask = np.load('/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
+    data *= mask
 
     return data / np.percentile(data[data > 0.00001], 50)
 
@@ -34,7 +34,7 @@ def read_matrix(filepath):
 def load_data(directory_path, labels_path,
               features_filename_include=None,
               features_filename_exclude=None,
-              as_one_hot=False, how_many=100):
+              how_many=100):
     labels_data = pd.read_excel(labels_path, index_col=0)
     drop_subj = 0
     labels_list = labels_data.index.tolist()
@@ -50,28 +50,55 @@ def load_data(directory_path, labels_path,
                 drop_subj, len(labels_list)))
 
     subj_id = labels_data.index.tolist()
-    labels = labels_data['labels'].tolist()
     pairing = labels_data['pairing'].tolist()
-
-    if len(labels_data.columns) > 1:
-        nbr_tab = 0
-        extra_tabular = []
-        for i in range(2, len(labels_data.columns)):
-            tab = labels_data[labels_data.columns[i]].tolist()
-            extra_tabular.append(tab)
-            nbr_tab += 1
-        color_print('Found {} tabular values.'.format(nbr_tab))
-    else:
-        extra_tabular = [[None] for i in range(len(labels))]
-        nbr_tab = 1
-    extra_tabular = np.array(extra_tabular).reshape(
-        (len(labels), nbr_tab)).tolist()
     
+    # labels = labels_data['labels'].tolist()
+    nbr_classifification, extra_classification = 0, []
+    nbr_regression, extra_regression = 0, []
+    nbr_tab, extra_tabular = 0, []
+    for i in range(1, len(labels_data.columns)):
+        full_name = labels_data.columns[i]
+        task, name = full_name.split('_')
+        if task == 'classification':
+            tmp = labels_data[labels_data.columns[i]].tolist()
+            nbr_classifification += 1
+            extra_classification.append(tmp)
+        elif task == 'regression':
+            tmp = labels_data[labels_data.columns[i]].tolist()
+            nbr_regression += 1
+            extra_regression.append(tmp)
+        elif task == 'tabular':
+            tmp = labels_data[labels_data.columns[i]].tolist()
+            extra_tabular.append(tmp)
+            nbr_tab += 1
+        else:
+            raise ValueError('Review naming convention of column.')
+
+    color_print('Found {} classifcation values.'.format(nbr_classifification))
+    color_print('Found {} regression values.'.format(nbr_regression))
+    color_print('Found {} tabular values.'.format(nbr_tab))
+    if nbr_classifification == 0:
+        extra_classification = [[None] for i in range(len(subj_id))]
+        nbr_classifification = 1
+    if nbr_regression == 0:
+        extra_regression = [[None] for i in range(len(subj_id))]
+        nbr_regression = 1
+    if nbr_tab == 0:
+        extra_tabular = [[None] for i in range(len(subj_id))]
+        nbr_tab = 1
+
+    extra_classification = np.array(extra_classification).reshape(
+        (len(subj_id), nbr_classifification)).tolist()
+    extra_regression = np.array(extra_regression).reshape(
+        (len(subj_id), nbr_regression)).tolist()
+    extra_tabular = np.array(extra_tabular).reshape(
+        (len(subj_id), nbr_tab)).tolist()
+
     # Shuffle the ordering
-    tmp = list(zip(subj_id, labels, extra_tabular, pairing))
+    tmp = list(zip(subj_id, pairing, extra_classification, extra_regression, extra_tabular))
     random.seed(0)
     random.shuffle(tmp)
-    subj_id, labels, extra_tabular, pairing = zip(*tmp)
+    subj_id, pairing, extra_classification, extra_regression, extra_tabular = zip(*tmp)
 
     if features_filename_include is None:
         features_filename_include = []
@@ -91,17 +118,18 @@ def load_data(directory_path, labels_path,
     matrix_size = read_matrix(os.path.join(directory_path, subj_id[0],
                                            features_filename_include[0])).shape[0]
 
-    labels = np.array(labels, dtype=np.int64)
+    extra_classification = np.array(extra_classification, dtype=np.int64)
+    extra_regression = np.array(extra_regression, dtype=np.float64)
     extra_tabular = np.array(extra_tabular, dtype=np.float64)
 
     subj_list = [os.path.join(directory_path, subj) for subj in subj_id]
-    return subj_list, labels, extra_tabular, pairing, matrix_size, features_filename_include
+    return subj_list, pairing, extra_classification, extra_regression, extra_tabular, matrix_size, features_filename_include
 
 
 def balance_sampler(dataset, idx):
     labels = []
     for i in idx:
-        labels.append(int(dataset[i][2]))
+        labels.append(float(dataset[i][2]))
 
     labels = np.array(labels)
     uniq = np.unique(labels)
@@ -111,7 +139,6 @@ def balance_sampler(dataset, idx):
     for i, u in enumerate(uniq):
         w[i] = 1 - len(np.where(labels == u)[0]) / len(labels)
         prob_dist[labels == u] = w[i]
-        # print(i, u, len(np.where(labels == u)[0]), len(labels))
 
     print()
     color_print('Rebalanced sampler with probability {} for class {}'.format(
@@ -124,15 +151,19 @@ class ConnectomeDataset(torch.utils.data.Dataset):
     def __init__(self, loaded_data,
                  mode="train",
                  transform=False,
-                 class_balancing=False):
+                 allow_duplicate_subj=True):
         """
         Args:
 
         """
-        subj_list, labels, extra_tabular, pairing, \
+        subj_list, pairing, extra_classification, extra_regression, extra_tabular, \
             self.matrix_size, self.features_filename = loaded_data
         self.mode = mode
         self.transform = transform
+
+        self.nbr_classification = len(extra_classification) if not np.any(np.isnan(extra_classification)) else 0
+        self.nbr_regression = len(extra_regression) if not np.any(np.isnan(extra_regression)) else 0
+        self.nbr_tabular = len(extra_tabular) if not np.any(np.isnan(extra_tabular)) else 0
 
         split_ratio = 0.75
         # Since pair of session are allowed, both sessions must be in the same
@@ -146,29 +177,34 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             true_idx = []
             for idx in idx_train:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                true_idx.extend(tmp)
-                # true_idx.append(int(tmp[0]))
+                if allow_duplicate_subj:
+                    true_idx.extend(tmp)
+                else:
+                    true_idx.append(int(tmp[0]))
         elif self.mode == 'test':
             true_idx = []
             for idx in idx_test:
                 tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
-                true_idx.extend(tmp)
-                # true_idx.append(int(tmp[0]))
+                if allow_duplicate_subj:
+                    true_idx.extend(tmp)
+                else:
+                    true_idx.append(int(tmp[0]))
 
         # If session stuff?
-        # true_idx = list(set(true_idx))
+        true_idx = true_idx if allow_duplicate_subj else list(set(true_idx))
 
         x = [subj_list[i] for i in true_idx]
-        y = labels[true_idx, ...]
-        t = extra_tabular[true_idx, ...]
+        y_c = extra_classification[true_idx, :]
+        y_r = extra_regression[true_idx, :]
+        t = extra_tabular[true_idx, :]
 
         color_print('Creating loader with {} datasets for {} set with {} '
-                    'transform'.format(len(y), mode, func_name))
+                    'transform'.format(len(x), mode, func_name))
 
         self.X = x
-        self.Y = torch.FloatTensor(y.astype(np.int64))
+        self.Y_c = torch.FloatTensor(y_c.astype(np.int64))
+        self.Y_r = torch.FloatTensor(y_r.astype(np.float64))
         self.T = torch.FloatTensor(t.astype(np.float64))
-
 
     def __len__(self):
         return len(self.X)
@@ -189,7 +225,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         if self.transform:
             features = self.transform(features)
 
-        sample = [features, self.T[idx], self.Y[idx]]
+        sample = [features, self.T[idx], self.Y_c[idx], self.Y_r[idx]]
         return sample
 
 
