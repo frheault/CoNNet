@@ -26,18 +26,22 @@ class E2EBlock(torch.nn.Module):
 
 class LinearBlocks(torch.nn.Module):
     '''LinearBlocks.'''
-    def __init__(self, l3, l2, l1, nbr_tabular=0, nbr_classes_each=0):
+
+    def __init__(self, l1, l2, nbr_tabular=0, nbr_classes_each=0):
         super(LinearBlocks, self).__init__()
-        self.dense1 = torch.nn.Linear(l3, 4096)
-        self.dense2 = torch.nn.Linear(4096+nbr_tabular, l1)
-        self.dense3 = torch.nn.Linear(l1, nbr_classes_each)
+        self.dense1 = torch.nn.Linear(l1, l2)
+        self.dense2 = torch.nn.Linear(l2+nbr_tabular, l2)
+        self.dense3 = torch.nn.Linear(l2, l2)
+        self.dense4 = torch.nn.Linear(l2, nbr_classes_each)
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x, t):
+        # print(x.shape, 'a')
         out = x.view(x.size(0), -1)
+        # print(out.shape, 'b')
         out = self.dropout(F.leaky_relu(self.dense1(out),
                                         negative_slope=0.33))
-
+        # print(out.shape, 'c')
         if t is None:
             out = self.dropout(F.leaky_relu(self.dense2(out),
                                             negative_slope=0.33))
@@ -45,8 +49,13 @@ class LinearBlocks(torch.nn.Module):
             out = torch.cat((out, t), dim=1)
             out = self.dropout(F.leaky_relu(self.dense2(out),
                                             negative_slope=0.33))
-
-        out = self.dense3(out)
+        # print(out.shape, 'd')
+        out = F.leaky_relu(self.dense3(out),
+                           negative_slope=0.33)
+        # print(out.shape, 'e')
+        out = F.leaky_relu(self.dense4(out),
+                           negative_slope=0.33)
+        # print(out.shape, 'f')
         return out
 
 

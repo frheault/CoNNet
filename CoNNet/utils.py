@@ -25,7 +25,8 @@ def read_matrix(filepath):
 
     # testing
     # mask = np.load('/home/frheault/Datasets/learning_ml/taylor/CAARE_reorganized/mask.npy')
-    mask = np.load('/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
+    mask = np.load(
+        '/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAM_CAM/mask.npy')
     data *= mask
 
     return data / np.percentile(data[data > 0.00001], 50)
@@ -51,7 +52,7 @@ def load_data(directory_path, labels_path,
 
     subj_id = labels_data.index.tolist()
     pairing = labels_data['pairing'].tolist()
-    
+
     # labels = labels_data['labels'].tolist()
     nbr_classifification, extra_classification = 0, []
     nbr_regression, extra_regression = 0, []
@@ -95,10 +96,12 @@ def load_data(directory_path, labels_path,
         (len(subj_id), nbr_tab)).tolist()
 
     # Shuffle the ordering
-    tmp = list(zip(subj_id, pairing, extra_classification, extra_regression, extra_tabular))
+    tmp = list(zip(subj_id, pairing, extra_classification,
+               extra_regression, extra_tabular))
     random.seed(0)
     random.shuffle(tmp)
-    subj_id, pairing, extra_classification, extra_regression, extra_tabular = zip(*tmp)
+    subj_id, pairing, extra_classification, extra_regression, extra_tabular = zip(
+        *tmp)
 
     if features_filename_include is None:
         features_filename_include = []
@@ -118,12 +121,13 @@ def load_data(directory_path, labels_path,
     matrix_size = read_matrix(os.path.join(directory_path, subj_id[0],
                                            features_filename_include[0])).shape[0]
 
-    extra_classification = np.array(extra_classification, dtype=np.int64)
+    extra_classification = np.array(extra_classification, dtype=np.float64)
     extra_regression = np.array(extra_regression, dtype=np.float64)
     extra_tabular = np.array(extra_tabular, dtype=np.float64)
 
     subj_list = [os.path.join(directory_path, subj) for subj in subj_id]
-    return subj_list, pairing, extra_classification, extra_regression, extra_tabular, matrix_size, features_filename_include
+    return subj_list, pairing, extra_classification, extra_regression, \
+        extra_tabular, matrix_size, features_filename_include
 
 
 def balance_sampler(dataset, idx):
@@ -161,9 +165,12 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         self.mode = mode
         self.transform = transform
 
-        self.nbr_classification = len(extra_classification) if not np.any(np.isnan(extra_classification)) else 0
-        self.nbr_regression = len(extra_regression) if not np.any(np.isnan(extra_regression)) else 0
-        self.nbr_tabular = len(extra_tabular) if not np.any(np.isnan(extra_tabular)) else 0
+        self.nbr_classification = len(extra_classification) if not np.any(
+            np.isnan(extra_classification)) else 0
+        self.nbr_regression = len(extra_regression) if not np.any(
+            np.isnan(extra_regression)) else 0
+        self.nbr_tabular = len(extra_tabular) if not np.any(
+            np.isnan(extra_tabular)) else 0
 
         split_ratio = 0.75
         # Since pair of session are allowed, both sessions must be in the same

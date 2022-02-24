@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 
-from scipy.stats import pearsonr
-from sklearn.metrics import mean_absolute_error as mae
 import os
 import random
 import logging
-from collections import OrderedDict
 
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
@@ -50,16 +47,17 @@ def customize_loss(nbr_classification, nbr_classes_each, nbr_regression,
     criterion_CE = torch.nn.CrossEntropyLoss()
     criterion_MSE = torch.nn.MSELoss()
 
-    loss = 0.0
+    loss_c = 0.0
+    loss_r = 0.0
     skip = 0
     for i in range(nbr_classification):
-        loss += criterion_CE(outputs[:, skip:skip +
-                             nbr_classes_each[i]], targets_c[:, i])
+        loss_c += criterion_CE(outputs[:, skip:skip +
+                                       nbr_classes_each[i]], targets_c[:, i])
         skip += nbr_classes_each[i]
 
     for i in range(nbr_regression):
-        loss += criterion_MSE(outputs[:, skip+i], targets_r[:, i])
-    return loss
+        loss_r += criterion_MSE(outputs[:, skip+i], targets_r[:, i])
+    return loss_c + loss_r
 
 
 def compute_scores(nbr_classification, nbr_classes_each,
@@ -94,7 +92,7 @@ def compute_scores(nbr_classification, nbr_classes_each,
 
 
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
-                         nb_fold=False, adaptive_lr=None, balance_class=False,
+                         nb_fold=False, adaptive_lr=None, balance_class=True,
                          checkpoint_dir=None, pre_training=None,
                          filenames_to_include=None,
                          filenames_to_exclude=None):
@@ -128,7 +126,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                            nbr_classification, nbr_classes_each,
                                            nbr_regression, nbr_tabular,
                                            l1=config['l1'], l2=config['l2'],
-                                           l3=config['l3'])
+                                           l3=config['l3'], l4=config['l4'])
 
             logging.info('Using pre-training! Transfering weigths')
             net.E2Econv1.cnn1.weight = net_pre.E2Econv1.cnn1.weight
@@ -137,7 +135,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             net.E2Econv2.cnn2.weight = net_pre.E2Econv2.cnn2.weight
             net.E2N.weight = net_pre.E2N.weight
             net.N2G.weight = net_pre.N2G.weight
-            net.dense1.weight = net_pre.dense1.weight
 
             logging.info('Using pre-training! Freezing layers.')
             net.E2Econv1.cnn1.weight.requires_grad = False
@@ -154,16 +151,15 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                        nbr_classification, nbr_classes_each,
                                        nbr_regression, nbr_tabular,
                                        l1=config['l1'], l2=config['l2'],
-                                       l3=config['l3'])
+                                       l3=config['l3'], l4=config['l4'])
 
     if use_cuda:
         net = net.cuda(0)
         # net = torch.nn.DataParallel(net, device_ids=[0])
 
-    momentum = 0.9
+    # momentum = 0.9
     lr = config['lr']
     wd = config['wd']
-
     # optimizer = torch.optim.SGD(net.parameters(),
     #                             momentum=momentum,
     #                             lr=lr, weight_decay=wd, nesterov=True)
@@ -397,7 +393,8 @@ def test_classification(input_results, in_folder, in_labels, balance_class=False
                                        nbr_regression, nbr_tabular,
                                        l1=best_trial.config['l1'],
                                        l2=best_trial.config['l2'],
-                                       l3=best_trial.config['l3'])
+                                       l3=best_trial.config['l3'],
+                                       l4=best_trial.config['l4'])
 
         if use_cuda:
             net = net.cuda(0)

@@ -11,9 +11,6 @@ import shutil
 
 import coloredlogs
 from ray import tune, init, shutdown
-from ray.tune import CLIReporter, ExperimentAnalysis
-from ray.tune.stopper import TrialPlateauStopper
-import torch
 
 from CoNNet.train import (train_classification,
                           test_classification)
@@ -74,12 +71,14 @@ def _build_arg_parser():
                          'models. Include all but.')
 
     m = p.add_argument_group('Model options')
-    m.add_argument('--layer_1_size', nargs='+', default=[64], type=int,
+    m.add_argument('--layer_1_size', nargs='+', default=[32], type=int,
                    help='List of layer (1) size to try [%(default)s].')
-    m.add_argument('--layer_2_size', nargs='+', default=[128], type=int,
+    m.add_argument('--layer_2_size', nargs='+', default=[64], type=int,
                    help='List of layer (2) size to try [%(default)s].')
-    m.add_argument('--layer_3_size', nargs='+', default=[256], type=int,
+    m.add_argument('--layer_3_size', nargs='+', default=[128], type=int,
                    help='List of layer (3) size to try [%(default)s].')
+    m.add_argument('--layer_4_size', nargs='+', default=[4096], type=int,
+                   help='List of layer (4) size to try [%(default)s].')
     return p
 
 
@@ -127,19 +126,16 @@ def main():
             "l1": tune.grid_search(args.layer_1_size),
             "l2": tune.grid_search(args.layer_2_size),
             "l3": tune.grid_search(args.layer_3_size),
+            "l4": tune.grid_search(args.layer_4_size),
             "lr": tune.grid_search(args.learning_rate),
             "batch_size": tune.grid_search(args.batch_size),
             "wd": tune.grid_search(args.weight_decay),
             "how_many": tune.grid_search(args.limit_sample_size)
         }
 
-
-        reporter = CLIReporter(
-            parameter_columns=["l1", "l2", 'l3', "lr"],
-            metric_columns=["loss", "accuracy", "f1_score", "mae", "corr",
-                            "training_iteration"])
-        # stopper = TrialPlateauStopper('loss', std=0.01, num_results=5,
-            #   grace_period=20)
+        reporter = tune.CLIReporter(parameter_columns=["l1", "l2", 'l3', "lr"],
+                                    metric_columns=["loss", "accuracy", "f1_score",
+                                                    "mae", "corr", "training_iteration"])
         print(args)
         result = tune.run(
             partial(train_classification,
