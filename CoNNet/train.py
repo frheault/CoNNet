@@ -21,10 +21,12 @@ from CoNNet.utils import (color_print, load_data, ConnectomeDataset,
                           add_noise, add_connections, remove_connections,
                           remove_row_column, balance_sampler)
 from CoNNet.sampler import WeightedRandomSampler
-from CoNNet.models import BrainNetCNN_double, BrainNetCNN_double_extra
+from CoNNet.models import BrainNetCNN_double
 from torch.optim.lr_scheduler import StepLR
 
 use_cuda = torch.cuda.is_available()
+
+# TODO triple-check it is deterministic
 
 
 def set_seed():
@@ -44,6 +46,32 @@ def seed_worker(worker_id):
 
 def customize_loss(nbr_classification, nbr_classes_each, nbr_regression,
                    outputs, targets_c, targets_r):
+    # TODO review type of input
+    """
+    Compute all losses for both classifications and regression tasks.
+
+    Parameters
+    ----------
+    nbr_classification : int
+       Number of classification tasks.
+    nbr_classes_each : list (int)
+        List of length classification for the size of the target space of
+        each classification task.
+    nbr_regression : int
+        Number of regression tasks.
+    outputs : list
+        List of predictions for all tasks.
+        Length of sum(nbr_classes_each) + nbr_regression
+    targets_c : list
+        List of target classes
+    targets_r : list
+        List of target values
+
+    Returns
+    -------
+    torch.nn.Loss
+        Sum of losses from all tasks
+    """
     criterion_CE = torch.nn.CrossEntropyLoss()
     criterion_MSE = torch.nn.MSELoss()
 
@@ -62,6 +90,32 @@ def customize_loss(nbr_classification, nbr_classes_each, nbr_regression,
 
 def compute_scores(nbr_classification, nbr_classes_each,
                    nbr_regression, preds, ytrue_c, ytrue_r):
+    # TODO review type of input
+    """
+    Compute all scores for both classifications and regression tasks.
+
+    Parameters
+    ----------
+    nbr_classification : int
+       Number of classification tasks.
+    nbr_classes_each : list (int)
+        List of length classification for the size of the target space of
+        each classification task.
+    nbr_regression : int
+        Number of regression tasks.
+    preds : list
+        List of predictions for all tasks.
+        Length of sum(nbr_classes_each) + nbr_regression
+    ytrue_c : list
+        List of target classes
+    ytrue_r : list
+        List of target values
+
+    Returns
+    -------
+    tuple (4,)
+        Scores for the entire set of tasks: acc, f1, maer, corr
+    """
     preds = np.concatenate(preds)
     ytrue_c = np.concatenate(ytrue_c)
     ytrue_r = np.concatenate(ytrue_r)
@@ -92,13 +146,14 @@ def compute_scores(nbr_classification, nbr_classes_each,
 
 
 def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
-                         nb_fold=False, adaptive_lr=None, balance_class=True,
+                         nb_fold=False, adaptive_lr=None, balance_class=False,
                          checkpoint_dir=None, pre_training=None,
                          filenames_to_include=None,
                          filenames_to_exclude=None):
     set_seed()
     if filenames_to_exclude is None:
-        filenames_to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
+        filenames_to_exclude = ['tot_commit2_weights.npy',
+                                'sc_edge_normalized.npy',
                                 'sc_vol_normalized.npy']
 
     loaded_stuff = load_data(directory_path=in_folder,
@@ -122,11 +177,11 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     if pre_training:
         if os.path.isfile(pre_training):
             net_pre = torch.load(pre_training)
-            net = BrainNetCNN_double_extra(nbr_features, matrix_size,
-                                           nbr_classification, nbr_classes_each,
-                                           nbr_regression, nbr_tabular,
-                                           l1=config['l1'], l2=config['l2'],
-                                           l3=config['l3'], l4=config['l4'])
+            net = BrainNetCNN_double(nbr_features, matrix_size,
+                                     nbr_classification, nbr_classes_each,
+                                     nbr_regression, nbr_tabular,
+                                     l1=config['l1'], l2=config['l2'],
+                                     l3=config['l3'], l4=config['l4'])
 
             logging.info('Using pre-training! Transfering weigths')
             net.E2Econv1.cnn1.weight = net_pre.E2Econv1.cnn1.weight
@@ -147,11 +202,11 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             logging.warning('Pre-training file does not exist!\n'
                             'Pre-training NOT activated.')
     else:
-        net = BrainNetCNN_double_extra(nbr_features, matrix_size,
-                                       nbr_classification, nbr_classes_each,
-                                       nbr_regression, nbr_tabular,
-                                       l1=config['l1'], l2=config['l2'],
-                                       l3=config['l3'], l4=config['l4'])
+        net = BrainNetCNN_double(nbr_features, matrix_size,
+                                 nbr_classification, nbr_classes_each,
+                                 nbr_regression, nbr_tabular,
+                                 l1=config['l1'], l2=config['l2'],
+                                 l3=config['l3'], l4=config['l4'])
 
     if use_cuda:
         net = net.cuda(0)
@@ -247,8 +302,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             ytrue_r = []
             for batch_idx, (inputs, tabs, targets_c, targets_r) in enumerate(trainloader):
                 if use_cuda:
-                    inputs, tabs, targets_c, targets_r = inputs.cuda(), tabs.cuda(), \
-                        targets_c.cuda().long(), targets_r.cuda()
+                    inputs, tabs, targets_c, targets_r = inputs.cuda(), \
+                        tabs.cuda(), targets_c.cuda().long(), targets_r.cuda()
                 optimizer.zero_grad()
 
                 tabs = None if nbr_tabular == 0 else tabs
@@ -295,8 +350,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             ytrue_r = []
             for batch_idx, (inputs, tabs, targets_c, targets_r) in enumerate(valloader):
                 if use_cuda:
-                    inputs, tabs, targets_c, targets_r = inputs.cuda(), tabs.cuda(), \
-                        targets_c.cuda().long(), targets_r.cuda()
+                    inputs, tabs, targets_c, targets_r = inputs.cuda(), \
+                        tabs.cuda(), targets_c.cuda().long(), targets_r.cuda()
                 with torch.no_grad():
                     tabs = None if nbr_tabular == 0 else tabs
                     outputs = net(inputs, tabs)
@@ -335,11 +390,12 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         f1_score=f1)
 
 
-def test_classification(input_results, in_folder, in_labels, balance_class=False,
+def test_classification(input_results, in_folder, in_labels,
                         filenames_to_include=None, filenames_to_exclude=None,
-                        save_best_model=None):
+                        balance_class=False, save_best_model=None):
     if filenames_to_exclude is None:
-        filenames_to_exclude = ['tot_commit2_weights.npy', 'sc_edge_normalized.npy',
+        filenames_to_exclude = ['tot_commit2_weights.npy',
+                                'sc_edge_normalized.npy',
                                 'sc_vol_normalized.npy']
     loaded_stuff = load_data(directory_path=in_folder,
                              labels_path=in_labels,
@@ -388,13 +444,13 @@ def test_classification(input_results, in_folder, in_labels, balance_class=False
         nbr_tabular = len(loaded_stuff[4][0]) if not np.any(
             np.isnan(loaded_stuff[4])) else 0
 
-        net = BrainNetCNN_double_extra(nbr_features, matrix_size,
-                                       nbr_classification, nbr_classes_each,
-                                       nbr_regression, nbr_tabular,
-                                       l1=best_trial.config['l1'],
-                                       l2=best_trial.config['l2'],
-                                       l3=best_trial.config['l3'],
-                                       l4=best_trial.config['l4'])
+        net = BrainNetCNN_double(nbr_features, matrix_size,
+                                 nbr_classification, nbr_classes_each,
+                                 nbr_regression, nbr_tabular,
+                                 l1=best_trial.config['l1'],
+                                 l2=best_trial.config['l2'],
+                                 l3=best_trial.config['l3'],
+                                 l4=best_trial.config['l4'])
 
         if use_cuda:
             net = net.cuda(0)
@@ -433,8 +489,8 @@ def test_classification(input_results, in_folder, in_labels, balance_class=False
             running_loss += loss.data.item()
 
             if use_cuda:
-                outputs, targets_c, targets_r = outputs.cpu(), targets_c.cpu(), \
-                    targets_r.cpu()
+                outputs, targets_c, targets_r = outputs.cpu(), \
+                    targets_c.cpu(), targets_r.cpu()
 
             preds.append(outputs.detach().numpy())
             ytrue_c.append(targets_c.detach().numpy())

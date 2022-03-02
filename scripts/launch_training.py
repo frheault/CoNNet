@@ -33,13 +33,14 @@ def _build_arg_parser():
     e.add_argument('--exp_name', default='classif_connectome',
                    help='Name of the current experiment [%(default)s].')
     e.add_argument('--pre_training', metavar='FILE',
-                   help='Path to a model file for Torch to use as pre-training.')
+                   help='Path to a model file for Torch pre-training.')
     e1 = e.add_mutually_exclusive_group()
     e1.add_argument('--evaluate_test_set', metavar='FILE',
-                    help='Skip training and only apply the network to test set.\n'
-                         'User must provide a model file.')
+                    help='Skip training and only apply the network to test'
+                    'set.\nUser must provide a model file.')
     e1.add_argument('--save_best_model',
-                    help='Save output model file (to reload or use as pre-training).')
+                    help='Save output model file (to reload or use as '
+                         'pre-training).')
     e2 = e.add_mutually_exclusive_group()
     e2.add_argument('--resume', action='store_true',
                     help='Resume experiment with --exp_name, checkpoints must '
@@ -94,9 +95,6 @@ def main():
         if args.resume and args.pre_training:
             args.pre_training = None
 
-        # if os.path.isdir(exp_folder) and args.pre_training and not args.overwrite:
-        #     parser.error('New experiment name must be defined if using '
-        #                  '--pre_training.')
         if os.path.isdir(exp_folder):
             if not args.overwrite and not args.resume:
                 parser.error('Folder exists, use --overwrite or --resume.')
@@ -133,9 +131,11 @@ def main():
             "how_many": tune.grid_search(args.limit_sample_size)
         }
 
-        reporter = tune.CLIReporter(parameter_columns=["l1", "l2", 'l3', "lr"],
-                                    metric_columns=["loss", "accuracy", "f1_score",
-                                                    "mae", "corr", "training_iteration"])
+        reporter = tune.CLIReporter(parameter_columns=["l1", "l2", 'l3', "l4",
+                                                       "lr"],
+                                    metric_columns=["loss", "accuracy",
+                                    "f1_score", "mae", "corr",
+                                                    "training_iteration"])
         print(args)
         result = tune.run(
             partial(train_classification,
@@ -155,7 +155,6 @@ def main():
             progress_reporter=reporter,
             checkpoint_score_attr="min-loss",
             keep_checkpoints_num=10,
-            # stop=stopper,
             resume=args.resume,
             local_dir=args.out_folder)
 
