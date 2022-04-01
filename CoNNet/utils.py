@@ -17,9 +17,9 @@ def color_print(txt, color='green'):
 
 
 def read_matrix(filepath, mask_path=None):
-    # dirname = '/home/frheault/Datasets/learning_ml/barry_connectome/BLSA_CAMCAN/'
-    # filename = 'mask.npy'
-    # mask_path = os.path.join(dirname, filename)
+    dirname = '/home/frheault/Datasets/learning_ml/pre_training_connectome/all_data/'
+    filename = 'mask.npy'
+    mask_path = os.path.join(dirname, filename)
     _, ext = os.path.splitext(filepath)
     if ext == '.txt':
         data = np.loadtxt(filepath).astype(np.float64)
@@ -116,7 +116,9 @@ def load_data(directory_path, labels_path,
             nbr_classifification += 1
             extra_classification.append(tmp)
         elif task == 'regression':
-            tmp = labels_data[labels_data.columns[i]].tolist()
+            if name == 'age':
+                tmp = (labels_data[labels_data.columns[i]] - 65.2622) / 9.4154
+            tmp = tmp.tolist()
             nbr_regression += 1
             extra_regression.append(tmp)
         elif task == 'tabular':

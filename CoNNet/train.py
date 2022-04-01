@@ -226,7 +226,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
     if checkpoint_dir:
         filename = os.path.join(checkpoint_dir, "checkpoint")
         if os.path.isfile(filename):
-            print(filename)
             model_state, optimizer_state = torch.load(filename)
             net.load_state_dict(model_state)
             optimizer.load_state_dict(optimizer_state)
@@ -423,8 +422,16 @@ def test_classification(input_results, in_folder, in_labels,
                             num_workers=1, sampler=test_sampler,
                             worker_init_fn=seed_worker)
 
-    nbr_tabular = testset_ori.nbr_tabular
-
+    nbr_features = len(loaded_stuff[-1])
+    matrix_size = loaded_stuff[-2]
+    nbr_classification = loaded_stuff[2].shape[-1] if not np.any(
+        np.isnan(loaded_stuff[2])) else 0
+    nbr_classes_each = [len(np.unique(loaded_stuff[2][:, i]))
+                        for i in range(nbr_classification)]
+    nbr_regression = len(loaded_stuff[3][0]) if not np.any(
+        np.isnan(loaded_stuff[3])) else 0
+    nbr_tabular = len(loaded_stuff[4][0]) if not np.any(
+        np.isnan(loaded_stuff[4])) else 0
     if isinstance(input_results, str):
         net = torch.load(input_results)
         if use_cuda:
@@ -433,17 +440,6 @@ def test_classification(input_results, in_folder, in_labels,
     else:
         best_trial = input_results.get_best_trial("loss", "min", "last")
         # Number of features / matrix size
-        nbr_features = len(loaded_stuff[-1])
-        matrix_size = loaded_stuff[-2]
-        nbr_classification = loaded_stuff[2].shape[-1] if not np.any(
-            np.isnan(loaded_stuff[2])) else 0
-        nbr_classes_each = [len(np.unique(loaded_stuff[2][:, i]))
-                            for i in range(nbr_classification)]
-        nbr_regression = len(loaded_stuff[3][0]) if not np.any(
-            np.isnan(loaded_stuff[3])) else 0
-        nbr_tabular = len(loaded_stuff[4][0]) if not np.any(
-            np.isnan(loaded_stuff[4])) else 0
-
         net = BrainNetCNN_double(nbr_features, matrix_size,
                                  nbr_classification, nbr_classes_each,
                                  nbr_regression, nbr_tabular,

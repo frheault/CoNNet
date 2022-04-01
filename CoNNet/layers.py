@@ -17,8 +17,12 @@ class E2EBlock(torch.nn.Module):
                                     bias=bias)
         self.cnn2 = torch.nn.Conv2d(in_planes, planes, (self.d, 1),
                                     bias=bias)
+        del self.cnn2.weight
+        self.cnn2.weight = torch.swapaxes(self.cnn1.weight, 2, 3).clone()
 
     def forward(self, x):
+        self.cnn2.weight = torch.swapaxes(self.cnn1.weight, 2, 3).clone()
+
         a = self.cnn1(x)
         b = self.cnn2(x)
         return torch.cat([a]*self.d, 3) + torch.cat([b]*self.d, 2)
