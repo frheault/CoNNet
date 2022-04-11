@@ -150,6 +150,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                          checkpoint_dir=None, pre_training=None,
                          filenames_to_include=None,
                          filenames_to_exclude=None):
+    # TODO docstring
     set_seed()
     if filenames_to_exclude is None:
         filenames_to_exclude = ['tot_commit2_weights.npy',
@@ -210,14 +211,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
     if use_cuda:
         net = net.cuda(0)
-        # net = torch.nn.DataParallel(net, device_ids=[0])
 
-    # momentum = 0.9
     lr = config['lr']
     wd = config['wd']
-    # optimizer = torch.optim.SGD(net.parameters(),
-    #                             momentum=momentum,
-    #                             lr=lr, weight_decay=wd, nesterov=True)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=wd,
                                  amsgrad=True, eps=1e-6)
     if adaptive_lr is not None:
@@ -244,6 +240,9 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                               trainset_noise, trainset_row_col])
 
     # Split training set in two (train/validation)
+    # The data has 3 types of data augmentation, appended one after the
+    # other. To avoid data contamination between train/validation data
+    # is picked from the original set and its associated duplicate selected
     max_len = len(trainset) // 4
     all_idx = np.arange(max_len)
     random.shuffle(all_idx)
@@ -260,6 +259,11 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     '{} train and {} val'.format(
                         fold, len(train_idx), len(val_idx)))
 
+        # Considering the split train/validation, pick the associated
+        # duplicated datasets in each of the data augmentation
+        # 1-2-3-1a-2a-3a-1b-2b-3c-1c-2c-3c
+        # 1-2 = train -> 1-2-1a-2a-1b-2b-1c-2c
+        # 3 = train -> 3-3a-3b-3c
         real_train_idx = []
         real_val_idx = []
         for i in range(4):
@@ -271,6 +275,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
         train_sampler = SubsetRandomSampler(real_train_idx)
         val_sampler = SubsetRandomSampler(real_val_idx)
 
+        # Only works if doing a single classification task!
         if balance_class:
             rng_cpu = torch.Generator()
             rng_cpu.manual_seed(1066)
@@ -341,7 +346,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             color_print('loss:{}, acc:{}, f1:{}, mae:{}, corr:{}'.format(
                 loss_train, acc, f1, maer, corr))
 
-            # VALIDATION
+            # Validation phase
             net.eval()
             running_loss = 0.0
             preds = []
@@ -422,6 +427,8 @@ def test_classification(input_results, in_folder, in_labels,
                             num_workers=1, sampler=test_sampler,
                             worker_init_fn=seed_worker)
 
+    # All information about the network must be known in order to either load
+    # it or to rebuild it (evaluation only, pre-training)
     nbr_features = len(loaded_stuff[-1])
     matrix_size = loaded_stuff[-2]
     nbr_classification = loaded_stuff[2].shape[-1] if not np.any(
@@ -436,7 +443,6 @@ def test_classification(input_results, in_folder, in_labels,
         net = torch.load(input_results)
         if use_cuda:
             net = net.cuda(0)
-            # net = torch.nn.DataParallel(net, device_ids=[0])
     else:
         best_trial = input_results.get_best_trial("loss", "min", "last")
         # Number of features / matrix size
@@ -450,22 +456,15 @@ def test_classification(input_results, in_folder, in_labels,
 
         if use_cuda:
             net = net.cuda(0)
-            # net = torch.nn.DataParallel(net, device_ids=[0])
 
         best_checkpoint_dir = best_trial.checkpoint.value
         model_state, _ = torch.load(os.path.join(best_checkpoint_dir,
                                                  "checkpoint"))
-        # new_state_dict = OrderedDict()
-        # for k, v in model_state.items():
-        #     new_state_dict[k.replace('module.module.', 'module.')] = v
         net.load_state_dict(model_state)
-
-        # cudnn.benchmark = True
 
     if save_best_model is not None:
         torch.save(net, save_best_model)
 
-    # test_loss = 0
     running_loss = 0.0
     preds = []
     ytrue_c = []
@@ -491,10 +490,6 @@ def test_classification(input_results, in_folder, in_labels,
             preds.append(outputs.detach().numpy())
             ytrue_c.append(targets_c.detach().numpy())
             ytrue_r.append(targets_r.detach().numpy())
-
-        # running_loss += loss.data.item()
-
-    # loss_test += loss.data.item()
 
     test_loss = running_loss/(batch_idx+1)
     acc, f1, maer, corr = compute_scores(nbr_classification,
