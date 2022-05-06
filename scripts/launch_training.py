@@ -12,8 +12,8 @@ import shutil
 import coloredlogs
 from ray import tune, init, shutdown
 
-from CoNNet.train import (train_classification,
-                          test_classification)
+from CoNNet.train_gan import (train_classification,
+                              test_classification)
 
 
 def _build_arg_parser():
@@ -134,7 +134,7 @@ def main():
         reporter = tune.CLIReporter(parameter_columns=["l1", "l2", 'l3', "l4",
                                                        "lr"],
                                     metric_columns=["loss", "accuracy",
-                                    "f1_score", "mae", "corr",
+                                                    "f1_score", "mae", "corr",
                                                     "training_iteration"])
         print(args)
         result = tune.run(

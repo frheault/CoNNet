@@ -10,6 +10,15 @@ import torch.utils.data.dataset
 
 verbose = True
 
+def get_n_params(model):
+    pp=0
+    for p in list(model.parameters()):
+        nn=1
+        for s in list(p.size()):
+            nn = nn*s
+        pp += nn
+    return pp
+
 
 def color_print(txt, color='green'):
     if verbose:
@@ -17,9 +26,9 @@ def color_print(txt, color='green'):
 
 
 def read_matrix(filepath, mask_path=None):
-    dirname = '/home/frheault/Datasets/learning_ml/pre_training_connectome/all_data/'
-    filename = 'mask.npy'
-    mask_path = os.path.join(dirname, filename)
+    # dirname = '/home/frheault/Datasets/learning_ml/pre_training_connectome/all_data/'
+    # filename = 'mask.npy'
+    # mask_path = os.path.join(dirname, filename)
     _, ext = os.path.splitext(filepath)
     if ext == '.txt':
         data = np.loadtxt(filepath).astype(np.float64)
@@ -36,7 +45,7 @@ def read_matrix(filepath, mask_path=None):
 def load_data(directory_path, labels_path,
               features_filename_include=None,
               features_filename_exclude=None,
-              how_many=100):
+              how_many=100, cycle_GaN=False):
     # TODO Add an example spreadsheet and data (Like the scanner prediction)
     # TODO retry filename exclude
     """
@@ -108,6 +117,7 @@ def load_data(directory_path, labels_path,
     nbr_classifification, extra_classification = 0, []
     nbr_regression, extra_regression = 0, []
     nbr_tab, extra_tabular = 0, []
+    found_GaN_variable = False
     for i in range(1, len(labels_data.columns)):
         full_name = labels_data.columns[i]
         task, name = full_name.split('_')
@@ -125,8 +135,19 @@ def load_data(directory_path, labels_path,
             tmp = labels_data[labels_data.columns[i]].tolist()
             extra_tabular.append(tmp)
             nbr_tab += 1
+        elif task == 'harmonize':
+            tmp = labels_data[labels_data.columns[i]].tolist()
+            nbr_classifification += 1
+            extra_classification.append(tmp)
+            found_GaN_variable = True
         else:
             raise ValueError('Review naming convention of column.')
+
+    if cycle_GaN:
+        if not found_GaN_variable:
+            raise ValueError('Found no Harmonizing task.')
+        elif nbr_classifification != 1 or nbr_regression > 0 or nbr_tab > 0:
+            raise ValueError('Cannot perform harmonization task with other tasks.')
 
     color_print('Found {} classifcation values.'.format(nbr_classifification))
     color_print('Found {} regression values.'.format(nbr_regression))
@@ -179,6 +200,8 @@ def load_data(directory_path, labels_path,
     extra_tabular = np.array(extra_tabular, dtype=np.float64)
 
     subj_list = [os.path.join(directory_path, subj) for subj in subj_id]
+
+
     return subj_list, pairing, extra_classification, extra_regression, \
         extra_tabular, matrix_size, features_filename_include
 
@@ -226,7 +249,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
     def __init__(self, loaded_data,
                  mode="train",
                  transform=False,
-                 allow_duplicate_subj=True):
+                 allow_duplicate_subj=False, cycle_GaN=False):
         """
         If only one classification task is present, balance the classes so the
         sampler can pick both classes uniformly.
@@ -249,6 +272,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
             extra_tabular, self.matrix_size, self.features_filename = loaded_data
         self.mode = mode
         self.transform = transform
+        self.cycle_GaN = cycle_GaN
 
         self.nbr_classification = len(extra_classification) if not np.any(
             np.isnan(extra_classification)) else 0
@@ -317,7 +341,10 @@ class ConnectomeDataset(torch.utils.data.Dataset):
         if self.transform:
             features = self.transform(features)
 
-        sample = [features, self.T[idx], self.Y_c[idx], self.Y_r[idx]]
+        if self.cycle_GaN:
+            sample = [features, self.Y_c[idx]]
+        else:
+            sample = [features, self.T[idx], self.Y_c[idx], self.Y_r[idx]]
         return sample
 
 
