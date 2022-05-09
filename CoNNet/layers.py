@@ -41,7 +41,10 @@ class LinearBlocks(torch.nn.Module):
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x, t=None):
-        out = x.view(x.size(0), -1)
+        try:
+            out = x.view(x.size(0), -1)
+        except:
+            print('EROOR', x.shape)
         out = self.dropout(F.leaky_relu(self.dense1(out),
                                         negative_slope=0.33))
         if t is None:
@@ -61,12 +64,15 @@ class LinearBlocks(torch.nn.Module):
 class Block(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, 3)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding='same')
         self.relu = nn.ReLU()
-        self.conv2 = nn.Conv2d(out_ch, out_ch, 3)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding='same')
 
     def forward(self, x):
-        return self.conv2(self.relu(self.conv1(x)))
+        out = self.conv1(x)
+        out = self.relu(out)
+        out = self.conv2(out)
+        return out
 
 
 class Encoder(nn.Module):
@@ -78,10 +84,14 @@ class Encoder(nn.Module):
 
     def forward(self, x):
         ftrs = []
+        i = 0
         for block in self.enc_blocks:
+            # print('ENC', i, x.shape)
             x = block(x)
             ftrs.append(x)
             x = self.pool(x)
+            i+=1
+        # print('ENC', i, x.shape)
         return ftrs
 
 class Decoder(nn.Module):
@@ -95,16 +105,18 @@ class Decoder(nn.Module):
 
     def forward(self, x, encoder_features):
         for i in range(len(self.chs)-1):
+            # print('DEC', i, x.shape)
             x = self.upconvs[i](x)
-            enc_ftrs = self.crop(encoder_features[i], x)
-            x = torch.cat([x, enc_ftrs], dim=1)
+            # enc_ftrs = self.crop(encoder_features[i], x)
+            x = torch.cat([x, encoder_features[i]], dim=1)
             x = self.dec_blocks[i](x)
+        # print('DEC', i, x.shape)
         return x
 
-    def crop(self, enc_ftrs, x):
-        _, _, H, W = x.shape
-        enc_ftrs = torchvision.transforms.CenterCrop([H, W])(enc_ftrs)
-        return enc_ftrs
+    # def crop(self, enc_ftrs, x):
+    #     _, _, H, W = x.shape
+    #     enc_ftrs = torchvision.transforms.CenterCrop([H, W])(enc_ftrs)
+    #     return enc_ftrs
 
 
 class UNet(nn.Module):
@@ -121,6 +133,6 @@ class UNet(nn.Module):
         enc_ftrs = self.encoder(x)
         out = self.decoder(enc_ftrs[::-1][0], enc_ftrs[::-1][1:])
         out = self.head(out)
-        out = F.interpolate(out, (self.matrix_size, self.matrix_size))
+        # out = F.interpolate(out, (self.matrix_size, self.matrix_size))
 
         return out

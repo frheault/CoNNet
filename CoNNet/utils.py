@@ -39,7 +39,10 @@ def read_matrix(filepath, mask_path=None):
         mask = np.load(mask_path)
         data *= mask
 
-    return data / np.percentile(data[data > 0.00001], 50)
+    tmp = np.zeros((128,128))
+    tmp[0:125,0:125] = data / np.percentile(data[data > 0.00001], 50)
+
+    return tmp
 
 
 def load_data(directory_path, labels_path,

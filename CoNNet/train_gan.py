@@ -30,7 +30,8 @@ from CoNNet.gan import BrainNetCNN_Discriminator, BrainNetCNN_Generator
 # from torch.optim.lr_scheduler import StepLR
 
 use_cuda = torch.cuda.is_available()
-
+LOSS_LAMDA_1 = 1.0
+LOSS_LAMDA_2 = 1.0
 # TODO triple-check it is deterministic
 
 
@@ -115,6 +116,11 @@ def compute_scores(preds, ytrue_c):
     ytrue_c = np.concatenate(ytrue_c)
 
     acc, f1 = 0.0, 0.0
+    print('--------------------')
+    print(len(preds.argmax(axis=1)), len(ytrue_c))
+    print(np.count_nonzero(preds.argmax(axis=1) == 1),
+          np.count_nonzero(ytrue_c == 1))
+    print('--------------------')
     acc += accuracy_score(preds.argmax(axis=1),  ytrue_c)
     f1 += f1_score(preds.argmax(axis=1), ytrue_c, average='weighted')
 
@@ -164,23 +170,23 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
         for discriminator in discriminators:
             discriminator.cuda()
 
-    lr = config['lr']
-    wd = config['wd']
     generators_optimizer = OrderedDict()
     for key in generators.keys():
         generators_optimizer[key] = torch.optim.Adam(
             generators[key].parameters(),
-            lr=lr, weight_decay=wd, amsgrad=True, eps=1e-6)
+            lr=config['lr_g'], weight_decay=config['wd_g'],
+            amsgrad=True, eps=1e-6)
 
     discriminators_optimizer = []
     for i in range(len(discriminators)):
         discriminators_optimizer.append(torch.optim.Adam(
             discriminators[i].parameters(),
-            lr=lr, weight_decay=wd, amsgrad=True, eps=1e-6))
+            lr=config['lr_d'], weight_decay=config['wd_d'],
+            amsgrad=True, eps=1e-6))
 
     CE_loss = nn.CrossEntropyLoss()
-    MSE_loss = nn.MSELoss()
-    BCEwLL_loss = nn.BCEWithLogitsLoss()
+    c_loss_1 = nn.L1Loss()
+    c_loss_2 = nn.MSELoss()
 
     # Prepare train/val with data augmentation
     transform = transforms.Compose([add_connections(), remove_connections()])
@@ -261,79 +267,130 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                 discriminator.train()
 
             running_loss = 0.0
+            running_maer = 0.0
             preds = []
             ytrue_c = []
             for batch_idx, (inputs, targets_c) in enumerate(trainloader):
                 if use_cuda:
                     inputs, targets_c = inputs.cuda(), targets_c.cuda().long()
 
-                for gen_opt in generators_optimizer.values():
-                    gen_opt.zero_grad()
-                for dis_opt in discriminators_optimizer:
-                    dis_opt.zero_grad()
-
                 split_inputs_true = []
                 for i in range(nbr_sites):
                     idx = torch.squeeze(targets_c) == i
                     split_inputs_true.append(inputs[idx])
 
-                if len(split_inputs_true[0]) == 0:
-                    continue
+                # if len(split_inputs_true[0]) == 0:
+                #     continue
 
                 # transfert_sites = OrderedDict()
                 all_losses = 0.0
                 for key in generators.keys():
                     start, finish = key.split('_to_')
-                    if len(split_inputs_true[int(start)]) == 0:
+                    start, finish = int(start), int(finish)
+                    if len(split_inputs_true[start]) == 0 or \
+                            len(split_inputs_true[finish]) == 0:
                         continue
-                    tmp_alt = generators[key](split_inputs_true[int(start)])
-                    tmp_labels = torch.zeros(len(tmp_alt)).cuda().long()
-                    true_labels = torch.ones(
-                        len(split_inputs_true[0])).cuda().long()
-
-                    target_dis_out = discriminators[int(finish)](
-                        tmp_alt.detach())
-                    target_dis_loss = CE_loss(target_dis_out, tmp_labels)
-
-                    true_target_dis_out = discriminators[int(finish)](
-                        split_inputs_true[0])
-                    true_target_dis_loss = CE_loss(
-                        true_target_dis_out, true_labels)
 
                     flip_key = '{}_to_{}'.format(finish, start)
+                    generators_optimizer[key].zero_grad()
+                    generators_optimizer[flip_key].zero_grad()
+
+                    tmp_alt = generators[key](split_inputs_true[start])
                     tmp_reconst = generators[flip_key](tmp_alt)
+                    # tmp_reconst = split_inputs_true[start].detach().clone()
+                    # tmp_alt = split_inputs_true[finish].detach().clone()
 
-                    cycle_mse_loss = MSE_loss(
-                        split_inputs_true[int(start)], tmp_reconst)
-                    cycle_bce_loss = BCEwLL_loss(
-                        split_inputs_true[int(start)], tmp_reconst)
-
-                    all_losses = target_dis_loss + true_target_dis_loss + \
-                        cycle_mse_loss / 100.0 + cycle_bce_loss / 10.0
+                    cycle_loss_1 = c_loss_1(
+                        split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_1
+                    cycle_loss_2 = c_loss_2(
+                        split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_2
+                    all_losses = cycle_loss_1 + cycle_loss_2
                     running_loss += all_losses
-                    maer = float(cycle_mse_loss / 100.0)
-                    # print('target_dis_loss', target_dis_loss)
-                    # print('true_target_dis_loss', true_target_dis_loss)
-                    # print('cycle_mse_loss', cycle_mse_loss / 100.0)
-                    # print('cycle_bce_loss', cycle_bce_loss / 10.0)
 
                     all_losses.backward()
                     generators_optimizer[key].step()
-                    discriminators_optimizer[int(finish)].step()
+                    generators_optimizer[flip_key].step()
+                    running_maer += float(cycle_loss_1 + cycle_loss_2)
+
+                    print('cycle_loss_1', float(cycle_loss_1))
+                    print('cycle_loss_2', float(cycle_loss_2))
+
+                    # Discriminator start
+                    false_labels = torch.zeros(len(
+                        tmp_alt)).cuda().long()
+                    true_labels = torch.ones(len(
+                        split_inputs_true[start])).cuda().long()
+                    discriminators_optimizer[start].zero_grad()
+
+                    origin_dis_out = discriminators[start](
+                        tmp_reconst.detach())
+                    origin_dis_loss = CE_loss(origin_dis_out,
+                                              false_labels)
+
+                    true_origin_dis_out = discriminators[start](
+                        split_inputs_true[start])
+                    true_origin_dis_loss = CE_loss(true_origin_dis_out,
+                                                   true_labels)
+
+                    all_losses = origin_dis_loss + true_origin_dis_loss
+                    all_losses.backward()
+                    running_loss += all_losses
+                    discriminators_optimizer[start].step()
+
+                    if use_cuda:
+                        origin_dis_out, true_origin_dis_out = \
+                            origin_dis_out.cpu(), true_origin_dis_out.cpu()
+                        false_labels, true_labels = false_labels.cpu(), true_labels.cpu()
+                    outputs = torch.cat(
+                        [origin_dis_out, true_origin_dis_out]).detach().numpy()
+                    targets_c = torch.cat(
+                        [false_labels, true_labels]).detach().numpy()
+                    preds.append(outputs)
+                    ytrue_c.append(targets_c)
+                    print('origin_dis_out_start', float(origin_dis_loss))
+                    print('true_origin_dis_out_start',
+                          float(true_origin_dis_loss))
+
+                    # Discriminator finish
+                    false_labels = torch.zeros(len(
+                        tmp_alt)).cuda().long()
+                    true_labels = torch.ones(len(
+                        split_inputs_true[finish])).cuda().long()
+                    discriminators_optimizer[finish].zero_grad()
+
+                    target_dis_out = discriminators[finish](
+                        tmp_alt.detach())
+                    target_dis_loss = CE_loss(target_dis_out, false_labels)
+
+                    true_target_dis_out = discriminators[finish](
+                        split_inputs_true[finish])
+                    true_target_dis_loss = CE_loss(true_target_dis_out,
+                                                   true_labels)
+
+                    all_losses = target_dis_loss + true_target_dis_loss
+                    all_losses.backward()
+                    running_loss += all_losses
+                    discriminators_optimizer[finish].step()
 
                     if use_cuda:
                         target_dis_out, true_target_dis_out = \
                             target_dis_out.cpu(), true_target_dis_out.cpu()
-                        tmp_labels, true_labels = tmp_labels.cpu(), true_labels.cpu()
+                        false_labels, true_labels = false_labels.cpu(), true_labels.cpu()
                     outputs = torch.cat(
                         [target_dis_out, true_target_dis_out]).detach().numpy()
                     targets_c = torch.cat(
-                        [tmp_labels, true_labels]).detach().numpy()
+                        [false_labels, true_labels]).detach().numpy()
                     preds.append(outputs)
                     ytrue_c.append(targets_c)
+                    print('target_dis_loss_finish', float(target_dis_loss))
+                    print('true_target_dis_loss_finish',
+                          float(true_target_dis_loss))
+
+                    print()
 
             loss_train = running_loss/(batch_idx+1)
-            acc, f1, maer, corr = compute_scores(preds, ytrue_c)
+            maer = running_maer/(batch_idx+1)
+            acc, f1, _, corr = compute_scores(preds, ytrue_c)
 
             writer.add_scalar('Loss/train', loss_train, epoch)
             writer.add_scalar('Accuracy/train', acc, epoch)
@@ -347,6 +404,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             generator.eval()
             discriminator.eval()
             running_loss = 0.0
+            running_maer = 0.0
             preds = []
             ytrue_c = []
             ytrue_r = []
@@ -364,56 +422,92 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         idx = torch.squeeze(targets_c) == i
                         split_inputs_true.append(inputs[idx])
 
-                    if len(split_inputs_true[0]) == 0:
+                    if len(split_inputs_true[start]) == 0 or \
+                            len(split_inputs_true[finish]) == 0:
                         continue
 
                     # transfert_sites = OrderedDict()
                     all_losses = 0.0
                     for key in generators.keys():
                         start, finish = key.split('_to_')
-                        if len(split_inputs_true[int(start)]) == 0:
+                        start, finish = int(start), int(finish)
+                        flip_key = '{}_to_{}'.format(finish, start)
+                        if len(split_inputs_true[start]) == 0:
                             continue
-                        tmp_alt = generators[key](split_inputs_true[int(start)])
-                        tmp_labels = torch.zeros(len(tmp_alt)).cuda().long()
+                        tmp_alt = generators[key](
+                            split_inputs_true[start])
+                        tmp_reconst = generators[flip_key](tmp_alt)
+                        # tmp_alt = torch.clone(split_inputs_true[start])
+                        false_labels = torch.zeros(len(tmp_alt)).cuda().long()
                         true_labels = torch.ones(
-                            len(split_inputs_true[0])).cuda().long()
+                            len(split_inputs_true[finish])).cuda().long()
                         # transfert_sites[key] = tmp_alt
 
-                        target_dis_out = discriminators[int(finish)](
-                            tmp_alt.detach())
-                        target_dis_loss = CE_loss(target_dis_out, tmp_labels)
+                        cycle_loss_1 = c_loss_1(
+                            split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_1
+                        cycle_loss_2 = c_loss_2(
+                            split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_2
+                        running_loss += all_losses
+                        running_maer += cycle_loss_1 + cycle_loss_2
 
-                        true_target_dis_out = discriminators[int(finish)](
-                            split_inputs_true[0])
+                        # Discriminator start
+                        false_labels = torch.zeros(
+                            len(tmp_reconst)).cuda().long()
+                        true_labels = torch.ones(
+                            len(split_inputs_true[start])).cuda().long()
+                        origin_dis_out = discriminators[start](
+                            tmp_reconst.detach())
+                        origin_dis_loss = CE_loss(origin_dis_out, false_labels)
+
+                        true_origin_dis_out = discriminators[start](
+                            split_inputs_true[start])
+                        true_origin_dis_loss = CE_loss(
+                            true_origin_dis_out, true_labels)
+
+                        if use_cuda:
+                            origin_dis_out, true_origin_dis_out = \
+                                origin_dis_out.cpu(), true_origin_dis_out.cpu()
+                            false_labels, true_labels = false_labels.cpu(), true_labels.cpu()
+                        outputs = torch.cat(
+                            [origin_dis_out, true_origin_dis_out]).detach().numpy()
+                        targets_c = torch.cat(
+                            [false_labels, true_labels]).detach().numpy()
+                        preds.append(outputs)
+                        ytrue_c.append(targets_c)
+
+                        # Discriminator finish
+                        false_labels = torch.zeros(len(tmp_alt)).cuda().long()
+                        true_labels = torch.ones(
+                            len(split_inputs_true[finish])).cuda().long()
+                        target_dis_out = discriminators[finish](
+                            tmp_alt.detach())
+                        target_dis_loss = CE_loss(target_dis_out, false_labels)
+
+                        true_target_dis_out = discriminators[finish](
+                            split_inputs_true[finish])
                         true_target_dis_loss = CE_loss(
                             true_target_dis_out, true_labels)
 
-                        flip_key = '{}_to_{}'.format(finish, start)
-                        tmp_reconst = generators[flip_key](tmp_alt)
-
-                        cycle_mse_loss = MSE_loss(
-                            split_inputs_true[int(start)], tmp_reconst)
-                        cycle_bce_loss = BCEwLL_loss(
-                            split_inputs_true[int(start)], tmp_reconst)
-
-                        all_losses = target_dis_loss + true_target_dis_loss + \
-                            cycle_mse_loss / 100.0 + cycle_bce_loss / 10.0
+                        all_losses = origin_dis_loss + true_origin_dis_loss + \
+                            target_dis_loss + true_target_dis_loss + \
+                            cycle_loss_1 + cycle_loss_2
                         running_loss += all_losses
-                        maer = float(cycle_mse_loss / 100.0)
+                        running_maer += cycle_loss_1 + cycle_loss_2
 
                         if use_cuda:
                             target_dis_out, true_target_dis_out = \
                                 target_dis_out.cpu(), true_target_dis_out.cpu()
-                            tmp_labels, true_labels = tmp_labels.cpu(), true_labels.cpu()
+                            false_labels, true_labels = false_labels.cpu(), true_labels.cpu()
                         outputs = torch.cat(
                             [target_dis_out, true_target_dis_out]).detach().numpy()
                         targets_c = torch.cat(
-                            [tmp_labels, true_labels]).detach().numpy()
+                            [false_labels, true_labels]).detach().numpy()
                         preds.append(outputs)
                         ytrue_c.append(targets_c)
 
             loss_val = running_loss/(batch_idx+1)
-            acc, f1, maer, corr = compute_scores(preds, ytrue_c)
+            maer = running_maer/(batch_idx+1)
+            acc, f1, _, corr = compute_scores(preds, ytrue_c)
 
             writer.add_scalar('Loss/val', loss_val, epoch)
             writer.add_scalar('Accuracy/val', acc, epoch)
