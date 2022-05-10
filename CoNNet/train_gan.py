@@ -30,8 +30,9 @@ from CoNNet.gan import BrainNetCNN_Discriminator, BrainNetCNN_Generator
 # from torch.optim.lr_scheduler import StepLR
 
 use_cuda = torch.cuda.is_available()
-LOSS_LAMDA_1 = 1.0
-LOSS_LAMDA_2 = 1.0
+LOSS_LAMDA_1 = 0.1
+LOSS_LAMDA_2 = 0.1
+LOSS_IDENTITY = 0.5
 # TODO triple-check it is deterministic
 
 
@@ -267,7 +268,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                 discriminator.train()
 
             running_loss = 0.0
-            running_maer = 0.0
+            running_cycle_loss = 0.0
             preds = []
             ytrue_c = []
             for batch_idx, (inputs, targets_c) in enumerate(trainloader):
@@ -300,20 +301,38 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     # tmp_reconst = split_inputs_true[start].detach().clone()
                     # tmp_alt = split_inputs_true[finish].detach().clone()
 
+                    idt_start = generators[flip_key](split_inputs_true[start])
+                    idt_finish = generators[key](split_inputs_true[finish])
+
                     cycle_loss_1 = c_loss_1(
                         split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_1
                     cycle_loss_2 = c_loss_2(
                         split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_2
+
                     all_losses = cycle_loss_1 + cycle_loss_2
+                    if LOSS_IDENTITY > 0:
+                        idt_start_loss_1 = c_loss_1(
+                            split_inputs_true[start], idt_start) / LOSS_LAMDA_1
+                        idt_start_loss_2 = c_loss_2(
+                            split_inputs_true[start], idt_start) / LOSS_LAMDA_2
+                        all_losses = cycle_loss_1 + cycle_loss_2
+                        idt_finish_loss_1 = c_loss_1(
+                            split_inputs_true[finish], idt_finish) / LOSS_LAMDA_1
+                        idt_finish_loss_2 = c_loss_2(
+                            split_inputs_true[finish], idt_finish) / LOSS_LAMDA_2
+                        all_losses += (idt_start_loss_1 + idt_start_loss_2 + \
+                            idt_finish_loss_1 + idt_finish_loss_2)*LOSS_IDENTITY
                     running_loss += all_losses
 
                     all_losses.backward()
                     generators_optimizer[key].step()
                     generators_optimizer[flip_key].step()
-                    running_maer += float(cycle_loss_1 + cycle_loss_2)
+                    running_cycle_loss += float(cycle_loss_1 + cycle_loss_2)
 
                     print('cycle_loss_1', float(cycle_loss_1))
                     print('cycle_loss_2', float(cycle_loss_2))
+                    print('identity_loss_1', float(idt_start_loss_1+idt_finish_loss_1))
+                    print('identity_loss_2', float(idt_start_loss_2+idt_finish_loss_2))
 
                     # Discriminator start
                     false_labels = torch.zeros(len(
@@ -389,22 +408,23 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     print()
 
             loss_train = running_loss/(batch_idx+1)
-            maer = running_maer/(batch_idx+1)
+            cycle_loss = running_cycle_loss/(batch_idx+1)
             acc, f1, _, corr = compute_scores(preds, ytrue_c)
 
             writer.add_scalar('Loss/train', loss_train, epoch)
             writer.add_scalar('Accuracy/train', acc, epoch)
             writer.add_scalar('F1/train', f1, epoch)
-            writer.add_scalar('MAE/train', maer, epoch)
-            writer.add_scalar('CORR/train', corr, epoch)
-            color_print('loss:{}, acc:{}, f1:{}, mae:{}, corr:{}'.format(
-                loss_train, acc, f1, maer, corr))
+            writer.add_scalar('cycle_loss/train', cycle_loss, epoch)
+            writer.add_scalar('discriminators_loss/train',
+                              loss_train-cycle_loss, epoch)
+            color_print('loss:{}, acc:{}, f1:{}, cycle_loss:{}, discriminators_loss:{}'.format(
+                loss_train, acc, f1, cycle_loss, loss_train-cycle_loss))
 
             # Validation phase
             generator.eval()
             discriminator.eval()
             running_loss = 0.0
-            running_maer = 0.0
+            running_cycle_loss = 0.0
             preds = []
             ytrue_c = []
             ytrue_r = []
@@ -447,8 +467,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                             split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_1
                         cycle_loss_2 = c_loss_2(
                             split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_2
-                        running_loss += all_losses
-                        running_maer += cycle_loss_1 + cycle_loss_2
 
                         # Discriminator start
                         false_labels = torch.zeros(
@@ -492,7 +510,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                             target_dis_loss + true_target_dis_loss + \
                             cycle_loss_1 + cycle_loss_2
                         running_loss += all_losses
-                        running_maer += cycle_loss_1 + cycle_loss_2
+                        running_cycle_loss += cycle_loss_1 + cycle_loss_2
 
                         if use_cuda:
                             target_dis_out, true_target_dis_out = \
@@ -506,22 +524,24 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         ytrue_c.append(targets_c)
 
             loss_val = running_loss/(batch_idx+1)
-            maer = running_maer/(batch_idx+1)
-            acc, f1, _, corr = compute_scores(preds, ytrue_c)
+            cycle_loss = running_cycle_loss/(batch_idx+1)
+            acc, f1, _, _ = compute_scores(preds, ytrue_c)
 
             writer.add_scalar('Loss/val', loss_val, epoch)
             writer.add_scalar('Accuracy/val', acc, epoch)
             writer.add_scalar('F1/val', f1, epoch)
-            writer.add_scalar('MAE/val', maer, epoch)
-            writer.add_scalar('CORR/val', corr, epoch)
+            writer.add_scalar('cycle_loss/val', cycle_loss, epoch)
+            writer.add_scalar('discriminators_loss/val',
+                              loss_val-cycle_loss, epoch)
 
             # with tune.checkpoint_dir(epoch) as checkpoint_dir:
             #     path = os.path.join(checkpoint_dir, "checkpoint")
             #     torch.save((discriminator.state_dict(),
             #                 discriminator_optimizer.state_dict()), path)
 
-            tune.report(loss=loss_val, mae=maer, corr=corr, accuracy=acc,
-                        f1_score=f1)
+            tune.report(loss=loss_val, cycle_loss=cycle_loss,
+                        discriminators_loss=loss_val-cycle_loss,
+                        accuracy=acc, f1_score=f1)
 
 
 def test_classification(input_results, in_folder, in_labels,

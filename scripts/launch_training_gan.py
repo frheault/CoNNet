@@ -134,10 +134,11 @@ def main():
             "how_many": tune.grid_search(args.limit_sample_size)
         }
 
-        reporter = tune.CLIReporter(parameter_columns=["l1", "l2", 'l3', "l4",
-                                                       "lr"],
+        reporter = tune.CLIReporter(parameter_columns=["lr_g", "lr_d", "wd_g",
+        "wd_d"],
                                     metric_columns=["loss", "accuracy",
-                                                    "f1_score", "mae", "corr",
+                                                    "f1_score", "cycle_loss",
+                                                    "discriminators_loss",
                                                     "training_iteration"])
         print(args)
         result = tune.run(
