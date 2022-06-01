@@ -165,6 +165,19 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                                 l3=config['l3'], l4=config['l4'])
                       for _ in range(nbr_sites)]
 
+    if checkpoint_dir:
+        for key in generators.keys():
+            filename = os.path.join(checkpoint_dir,
+                                    'generator_{}'.format(key))
+            if os.path.isfile(filename):
+                generators[key].load_state_dict(torch.load(filename))
+
+        for i in range(nbr_sites):
+            filename = os.path.join(checkpoint_dir,
+                                    'discriminator_{}'.format(i))
+            if os.path.isfile(filename):
+                discriminators[i].load_state_dict(torch.load(filename))
+
     if use_cuda:
         for generator in generators.values():
             generator.cuda()
@@ -281,10 +294,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     idx = torch.squeeze(targets_c) == i
                     split_inputs_true.append(inputs[idx])
 
-                # if len(split_inputs_true[0]) == 0:
-                #     continue
-
-                # transfert_sites = OrderedDict()
                 all_losses = 0.0
                 for key in generators.keys():
                     start, finish = key.split('_to_')
@@ -299,8 +308,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
                     tmp_alt = generators[key](split_inputs_true[start])
                     tmp_reconst = generators[flip_key](tmp_alt)
-                    # tmp_reconst = split_inputs_true[start].detach().clone()
-                    # tmp_alt = split_inputs_true[finish].detach().clone()
 
                     idt_start = generators[flip_key](split_inputs_true[start])
                     idt_finish = generators[key](split_inputs_true[finish])
@@ -321,8 +328,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                             split_inputs_true[finish], idt_finish) / LOSS_LAMDA_1
                         idt_finish_loss_2 = c_loss_2(
                             split_inputs_true[finish], idt_finish) / LOSS_LAMDA_2
-                        all_losses += (idt_start_loss_1 + idt_start_loss_2 + \
-                            idt_finish_loss_1 + idt_finish_loss_2)*LOSS_IDENTITY
+                        all_losses += (idt_start_loss_1 + idt_start_loss_2 +
+                                       idt_finish_loss_1 + idt_finish_loss_2)*LOSS_IDENTITY
                     running_loss += all_losses
 
                     all_losses.backward()
@@ -332,8 +339,10 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
                     print('cycle_loss_1', float(cycle_loss_1))
                     print('cycle_loss_2', float(cycle_loss_2))
-                    print('identity_loss_1', float(idt_start_loss_1+idt_finish_loss_1))
-                    print('identity_loss_2', float(idt_start_loss_2+idt_finish_loss_2))
+                    print('identity_loss_1', float(
+                        idt_start_loss_1+idt_finish_loss_1))
+                    print('identity_loss_2', float(
+                        idt_start_loss_2+idt_finish_loss_2))
 
                     # Discriminator start
                     false_labels = torch.zeros(len(
@@ -368,7 +377,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     preds.append(outputs)
                     ytrue_c.append(targets_c)
                     print('origin_dis_out_start', float(origin_dis_loss))
-                    print('true_origin_dis_out_start', float(true_origin_dis_loss))
+                    print('true_origin_dis_out_start',
+                          float(true_origin_dis_loss))
 
                     # Discriminator finish
                     false_labels = torch.zeros(len(
@@ -402,7 +412,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     preds.append(outputs)
                     ytrue_c.append(targets_c)
                     print('target_dis_loss_finish', float(target_dis_loss))
-                    print('true_target_dis_loss_finish',float(true_target_dis_loss))
+                    print('true_target_dis_loss_finish',
+                          float(true_target_dis_loss))
 
                     print()
 
@@ -431,10 +442,6 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                 if use_cuda:
                     inputs, targets_c = inputs.cuda(), targets_c.cuda().long()
 
-                # for gen_opt in generators_optimizer.values():
-                #     gen_opt.zero_grad()
-                # for dis_opt in discriminators_optimizer:
-                #     dis_opt.zero_grad()
                 with torch.no_grad():
                     split_inputs_true = []
                     for i in range(nbr_sites):
@@ -444,14 +451,16 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                     if len(split_inputs_true[start]) == 0 or \
                             len(split_inputs_true[finish]) == 0:
                         continue
-                    
+
                     # DEBUG #
                     if batch_idx == 0:
-                        test_mat_a = torch.unsqueeze(trainset[247][0], dim=0).cuda()
+                        test_mat_a = torch.unsqueeze(
+                            trainset[247][0], dim=0).cuda()
                         print(test_mat_a.shape)
-                        test_mat_b = torch.unsqueeze(trainset[152][0], dim=0).cuda()
+                        test_mat_b = torch.unsqueeze(
+                            trainset[152][0], dim=0).cuda()
                         start, finish = 0, 1
-                        key = '{}_to_{}'.format(start,finish)
+                        key = '{}_to_{}'.format(start, finish)
                         flip_key = '{}_to_{}'.format(finish, start)
 
                         print('a')
@@ -473,25 +482,22 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         np.save(path+'ori_b_{}'.format(epoch), ori)
                         np.save(path+'reconst_b_{}'.format(epoch), reconst)
 
-                    # transfert_sites = OrderedDict()
                     all_losses = 0.0
                     for key in generators.keys():
                         start, finish = key.split('_to_')
                         start, finish = int(start), int(finish)
                         flip_key = '{}_to_{}'.format(finish, start)
-                        # if len(split_inputs_true[start]) == 0:
-                        #     continue
+
                         tmp_alt = generators[key](
                             split_inputs_true[start])
                         tmp_reconst = generators[flip_key](tmp_alt)
-                        idt_start = generators[flip_key](split_inputs_true[start])
+                        idt_start = generators[flip_key](
+                            split_inputs_true[start])
                         idt_finish = generators[key](split_inputs_true[finish])
 
-                        # tmp_alt = torch.clone(split_inputs_true[start])
                         false_labels = torch.zeros(len(tmp_alt)).cuda().long()
                         true_labels = torch.ones(
                             len(split_inputs_true[finish])).cuda().long()
-                        # transfert_sites[key] = tmp_alt
 
                         cycle_loss_1 = c_loss_1(
                             split_inputs_true[start], tmp_reconst) / LOSS_LAMDA_1
@@ -509,8 +515,8 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                                 split_inputs_true[finish], idt_finish) / LOSS_LAMDA_1
                             idt_finish_loss_2 = c_loss_2(
                                 split_inputs_true[finish], idt_finish) / LOSS_LAMDA_2
-                            all_losses += (idt_start_loss_1 + idt_start_loss_2 + \
-                                idt_finish_loss_1 + idt_finish_loss_2)*LOSS_IDENTITY
+                            all_losses += (idt_start_loss_1 + idt_start_loss_2 +
+                                           idt_finish_loss_1 + idt_finish_loss_2)*LOSS_IDENTITY
 
                         # Discriminator start
                         false_labels = torch.zeros(
@@ -578,10 +584,15 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             writer.add_scalar('discriminators_loss/val',
                               loss_val-cycle_loss, epoch)
 
-            # with tune.checkpoint_dir(epoch) as checkpoint_dir:
-            #     path = os.path.join(checkpoint_dir, "checkpoint")
-            #     torch.save((discriminator.state_dict(),
-            #                 discriminator_optimizer.state_dict()), path)
+            with tune.checkpoint_dir(epoch) as checkpoint_dir:
+                for key in generators.keys():
+                    filename = os.path.join(checkpoint_dir, 'generator_{}'.format(key))
+                    torch.save(generators[key].state_dict(), filename)
+
+                for i in range(nbr_sites):
+                    filename = os.path.join(checkpoint_dir, 'discriminator_{}'.format(i))
+                    torch.save(discriminators[i].state_dict(),
+                               checkpoint_dir + '/discriminator_{}'.format(i))
 
             tune.report(loss=loss_val, cycle_loss=cycle_loss,
                         discriminators_loss=loss_val-cycle_loss,
