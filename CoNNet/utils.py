@@ -40,7 +40,8 @@ def read_matrix(filepath, mask_path=None):
         data *= mask
 
     tmp = np.zeros((128,128))
-    tmp[0:125,0:125] = data / np.percentile(data[data > 0.00001], 50)
+    tmp[np.where(data>0.00001)] = np.log(data[np.where(data>0.00001)])
+    # tmp[0:125,0:125] = data / np.percentile(data[data > 0.00001], 50)
 
     return tmp
 
@@ -204,7 +205,6 @@ def load_data(directory_path, labels_path,
 
     subj_list = [os.path.join(directory_path, subj) for subj in subj_id]
 
-
     return subj_list, pairing, extra_classification, extra_regression, \
         extra_tabular, matrix_size, features_filename_include
 
@@ -308,7 +308,14 @@ class ConnectomeDataset(torch.utils.data.Dataset):
                     true_idx.extend(tmp)
                 else:
                     true_idx.append(int(tmp[0]))
-
+        elif self.mode == 'both':
+            true_idx = []
+            for idx in idx_test+idx_train:
+                tmp = np.argwhere(np.array(pairing) == pairing[idx]).ravel()
+                if allow_duplicate_subj:
+                    true_idx.extend(tmp)
+                else:
+                    true_idx.append(int(tmp[0]))
         # If session stuff?
         true_idx = true_idx if allow_duplicate_subj else list(set(true_idx))
 
@@ -333,6 +340,7 @@ class ConnectomeDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         path = self.filepaths[idx]
+        
         features = np.zeros((len(self.features_filename),
                              self.matrix_size, self.matrix_size),
                             dtype=np.float64)
@@ -370,7 +378,6 @@ class add_noise(object):
             noise[tmp_arr < minval] = 0
             noise = np.triu(noise) + np.triu(noise, k=1).T
             tmp_arr += noise
-
         return array
 
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from collections import OrderedDict
+from genericpath import isdir
 import itertools
 import os
 import random
@@ -247,7 +248,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
             real_train_idx.extend(new_train)
             new_val = np.array(val_idx, dtype=int) + (i * max_len)
             real_val_idx.extend(new_val)
-            trainset[new_val[-1]]
+            # trainset[new_val[-1]]
         train_sampler = SubsetRandomSampler(real_train_idx)
         val_sampler = SubsetRandomSampler(real_val_idx)
 
@@ -468,7 +469,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
                         print('b')
                         tmp_reconst = generators[flip_key](tmp_alt)
                         print('c')
-                        path = '/home/frheault/Datasets/learning_ml/debug/'
+                        path = '/home/frheault/Datasets/CoNNet/debug/'
                         ori = test_mat_a.detach().cpu().numpy()
                         reconst = tmp_reconst.detach().cpu().numpy()
                         np.save(path+'ori_a_{}'.format(epoch), ori)
@@ -476,7 +477,7 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
                         tmp_alt = generators[flip_key](test_mat_b)
                         tmp_reconst = generators[key](tmp_alt)
-                        path = '/home/frheault/Datasets/learning_ml/debug/'
+                        path = '/home/frheault/Datasets/CoNNet/debug/'
                         ori = test_mat_b.detach().cpu().numpy()
                         reconst = tmp_reconst.detach().cpu().numpy()
                         np.save(path+'ori_b_{}'.format(epoch), ori)
@@ -586,11 +587,13 @@ def train_classification(config, in_folder=None, in_labels=None, num_epoch=100,
 
             with tune.checkpoint_dir(epoch) as checkpoint_dir:
                 for key in generators.keys():
-                    filename = os.path.join(checkpoint_dir, 'generator_{}'.format(key))
+                    filename = os.path.join(
+                        checkpoint_dir, 'generator_{}'.format(key))
                     torch.save(generators[key].state_dict(), filename)
 
                 for i in range(nbr_sites):
-                    filename = os.path.join(checkpoint_dir, 'discriminator_{}'.format(i))
+                    filename = os.path.join(
+                        checkpoint_dir, 'discriminator_{}'.format(i))
                     torch.save(discriminators[i].state_dict(),
                                checkpoint_dir + '/discriminator_{}'.format(i))
 
@@ -704,3 +707,50 @@ def test_classification(input_results, in_folder, in_labels,
 
     if not isinstance(input_results, str):
         print(best_trial.config)
+
+
+def apply_gan(in_models, in_folder, in_labels, filenames_to_include, filenames_to_exclude, final_target='0', out_dir='./apply/'):
+    """
+    Apply the GAN to a dataset
+    """
+    set_seed()
+    if filenames_to_exclude is None:
+        filenames_to_exclude = ['tot_commit2_weights.npy',
+                                'sc_edge_normalized.npy',
+                                'sc_vol_normalized.npy']
+
+    loaded_stuff = load_data(directory_path=in_folder,
+                             labels_path=in_labels,
+                             features_filename_include=filenames_to_include,
+                             features_filename_exclude=filenames_to_exclude,
+                             how_many=10000000, cycle_GaN=True)
+    # Number of features / matrix size
+    nbr_features = len(loaded_stuff[-1])
+    matrix_size = loaded_stuff[-2]
+
+    # Number of features / matrix size
+    dict_model = {}
+    for filename in in_models:
+        basename = os.path.basename(filename).replace('generator_', '')
+        source, target = basename.split('_to_')
+        net = BrainNetCNN_Generator(nbr_features, matrix_size)
+        net.load_state_dict(torch.load(filename))
+        if target == final_target:
+            dict_model[(source, final_target)] = net
+
+    dataset_ori = ConnectomeDataset(loaded_stuff, mode='both',
+                                     transform=False, cycle_GaN=True)
+
+    for i in range(len(dataset_ori)):
+        if str(int(dataset_ori.Y_c[i])) != final_target:
+            curr_model = dict_model[(str(int(dataset_ori.Y_c[i])), final_target)]
+            reconst = curr_model(torch.unsqueeze(dataset_ori[i][0], dim=0))
+            basedir = os.path.basename(dataset_ori.filepaths[i])
+            tmp_dir = os.path.join(out_dir, basedir)
+
+            if not os.path.isdir(tmp_dir):
+                os.mkdir(tmp_dir)
+            for i in range(len(dataset_ori.features_filename)):
+                tmp_name = os.path.join(tmp_dir, dataset_ori.features_filename[i])
+                np.save(tmp_name, reconst[0, i, :, :].detach().numpy())
+
